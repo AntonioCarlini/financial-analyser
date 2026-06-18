@@ -127,11 +127,12 @@ class MatchCondition:
 class Rule:
     id: str
     priority: int
-    conditions: list[MatchCondition]   # instead of description
+    conditions: list[MatchCondition]
     category: str
     ownership: dict[str, int]
     transaction_types: set[str] | None
     direction: str | None
+    when: list[dict] | None = None
 
 @dataclass
 class ControlFile:
@@ -157,12 +158,83 @@ class CategorySummary:
 
 
 @dataclass
-@dataclass
 class AnalysisResult:
     summaries: dict[str, CategorySummary]
     uncategorised: list[Transaction]
     warnings: list[str]
     category_transactions: dict[str, list[tuple[Transaction, str | None]]] = field(default_factory=dict)
+
+# ------------------------------------------------------------
+# Condition checkers for "when" clauses
+# ------------------------------------------------------------
+
+CONDITION_CHECKERS = {}
+
+def register_checker(cond_type):
+    """Decorator to register a condition checker function."""
+    def decorator(func):
+        CONDITION_CHECKERS[cond_type] = func
+        return func
+    return decorator
+
+def parse_date(date_str):
+    """Parse a date string in DD-MM-YYYY or YYYY-MM-DD format."""
+    date_str = date_str.strip()
+    # Try YYYY-MM-DD first
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try DD-MM-YYYY
+    try:
+        return datetime.strptime(date_str, "%d-%m-%Y")
+    except ValueError:
+        raise ValueError(f"Unrecognised date format: {date_str}")
+
+def parse_tax_year(tax_year_str):
+    """Return (start_date, end_date) for a UK tax year like '2023-2024'."""
+    parts = tax_year_str.split('-')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid tax year format: {tax_year_str}")
+    start_year = int(parts[0])
+    start = datetime(start_year, 4, 6)
+    end = datetime(start_year + 1, 4, 5)
+    return start, end
+
+# Condition checkers
+@register_checker("amount_range")
+def check_amount_range(tx, value):
+    """value is [min, max] inclusive."""
+    min_val, max_val = value
+    amount = tx.credit if tx.credit else tx.debit
+    return min_val <= amount <= max_val
+
+@register_checker("amount_exact")
+def check_amount_exact(tx, value):
+    """value is a single number."""
+    amount = tx.credit if tx.credit else tx.debit
+    return amount == value
+
+@register_checker("line_numbers")
+def check_line_numbers(tx, value):
+    """value is a list of line numbers."""
+    return tx.line_number in value
+
+@register_checker("tax_year")
+def check_tax_year(tx, value):
+    """value is a string like '2023-2024'."""
+    start, end = parse_tax_year(value)
+    return start <= tx.date <= end
+
+@register_checker("date_range")
+def check_date_range(tx, value):
+    """value is [start_date, end_date] as strings."""
+    start_str, end_str = value
+    start = parse_date(start_str)
+    end = parse_date(end_str)
+    return start <= tx.date <= end
+
+
 
 def print_pass(message, verbose, stats):
     stats.pass_count += 1
@@ -306,6 +378,7 @@ def load_control_file(filename):
                 ownership=rule_data.get("ownership", {}),
                 transaction_types=set(rule_data.get("expect", {}).get("transaction_types", [])) or None,
                 direction=rule_data.get("expect", {}).get("direction"),
+                when=rule_data.get("when"), 
             )
         )
 
@@ -350,6 +423,28 @@ def match_rule(tx, rule):
             return False
         if rule.direction == "debit" and tx.debit == 0:
             return False
+
+    # Finally, check the "when" clause (if present)
+    if rule.when is not None:
+        # rule.when is a list of groups; OR across groups, AND within each group
+        for group in rule.when:
+            group_passes = True
+            for cond_type, cond_value in group.items():
+                checker = CONDITION_CHECKERS.get(cond_type)
+                if checker is None:
+                    # Unknown condition type – treat as failure to be safe
+                    group_passes = False
+                    break
+                if not checker(tx, cond_value):
+                    group_passes = False
+                    break
+            if group_passes:
+                # This group matched – rule passes
+                return True
+        # No group matched – rule fails
+        return False
+
+    # No 'when' clause, or it matched
     return True
 
 def analyse_transactions(
