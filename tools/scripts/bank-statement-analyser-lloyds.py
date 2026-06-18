@@ -90,19 +90,16 @@ class AnalysisResults:
     error_count: int = 0
 
 
-@dataclass
+# Must be frozen as it is now used as a key in the facet_assignments dictionary
+@dataclass(frozen=True)
 class Transaction:
     line_number: int
-
     date: datetime
-
     transaction_type: str
     description: str
-
     debit: Decimal
     credit: Decimal
     balance: Decimal
-
     sort_code: str
     account_number: str
 
@@ -116,7 +113,7 @@ class Person:
 class Category:
     id: str
     description: str
-
+    default_facets: list[str] = field(default_factory=list)
 
 @dataclass
 class MatchCondition:
@@ -133,19 +130,16 @@ class Rule:
     transaction_types: set[str] | None
     direction: str | None
     when: list[dict] | None = None
+    facets: list[str] | None = None   # NEW: rule-level override
 
 @dataclass
 class ControlFile:
     people: dict[str, Person]
-
     categories: dict[str, Category]
-
     rules: list[Rule]
-
     default_category: str
-
     default_ownership: dict[str, int]
-
+    facet_definitions: dict = field(default_factory=dict)
 
 @dataclass
 class CategorySummary:
@@ -156,13 +150,13 @@ class CategorySummary:
     total_credit: Decimal = Decimal("0")
     total_debit: Decimal = Decimal("0")
 
-
 @dataclass
 class AnalysisResult:
     summaries: dict[str, CategorySummary]
     uncategorised: list[Transaction]
     warnings: list[str]
     category_transactions: dict[str, list[tuple[Transaction, str | None]]] = field(default_factory=dict)
+    facet_assignments: dict[Transaction, list[str]] = field(default_factory=dict)
 
 # ------------------------------------------------------------
 # Condition checkers for "when" clauses
@@ -294,11 +288,29 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--display-facet",
+        action="append",
+        default=[],
+        help="Show all transactions assigned to this facet code (repeatable, OR logic)",
+    )
+
+    parser.add_argument(
+        "--facet-report",
+        help="Generate a summary report for a facet group",
+    )
+
+    parser.add_argument(
         "--print-report",
         default=False,
         help="Print report data"
     )
 
+    parser.add_argument(
+	    "--relax-facet-checks",
+	    action=argparse.BooleanOptionalAction,
+	    default=True,
+	    help="Collect all facet validation errors (don't stop early). Default: True",
+	)
     parser.add_argument(
         "--statement",
         required=True,
@@ -346,9 +358,25 @@ def load_control_file(filename):
     ):
 
         categories[category_id] = Category(
-            id=category_id,
-            description=category_data["description"],
-        )
+		    id=category_id,
+		    description=category_data["description"],
+		    default_facets=category_data.get("default_facets", []),
+		)
+
+
+    # Load facet definitions with full metadata
+    facet_definitions = {}
+    for group_name, group_data in raw.get("facets", {}).items():
+        codes_dict = {}
+        for item in group_data.get("codes", []):
+            codes_dict[item["code"]] = {
+                "description": item.get("description", ""),
+                "suppress_in_report": item.get("suppress_in_report", False),
+            }
+        facet_definitions[group_name] = {
+            "description": group_data.get("description", ""),
+            "codes": codes_dict,
+        }
 
     rules = []
 
@@ -378,7 +406,8 @@ def load_control_file(filename):
                 ownership=rule_data.get("ownership", {}),
                 transaction_types=set(rule_data.get("expect", {}).get("transaction_types", [])) or None,
                 direction=rule_data.get("expect", {}).get("direction"),
-                when=rule_data.get("when"), 
+                when=rule_data.get("when"),
+                facets=rule_data.get("classify", {}).get("facets"),
             )
         )
 
@@ -391,12 +420,9 @@ def load_control_file(filename):
         people=people,
         categories=categories,
         rules=rules,
-        default_category=raw["defaults"][
-            "category"
-        ],
-        default_ownership=raw["defaults"][
-            "ownership"
-        ],
+        default_category=raw["defaults"]["category"],
+        default_ownership=raw["defaults"]["ownership"],
+        facet_definitions=facet_definitions,
     )
 
 def match_rule(tx, rule):
@@ -467,6 +493,7 @@ def analyse_transactions(
     warnings = []
 
     category_transactions = {cat_id: [] for cat_id in control.categories}
+    facet_assignments = {}
 
     for tx in transactions:
 
@@ -537,6 +564,14 @@ def analyse_transactions(
             (tx, matched_rule.id if matched_rule else None)
         )
         
+		# Resolve facets
+        if matched_rule and matched_rule.facets is not None:
+            assigned_facets = matched_rule.facets
+        else:
+            assigned_facets = control.categories[category_id].default_facets
+
+        facet_assignments[tx] = assigned_facets
+
         summary = summaries[
             category_id
         ]
@@ -550,6 +585,7 @@ def analyse_transactions(
         uncategorised=uncategorised,
         warnings=warnings,
         category_transactions=category_transactions,
+        facet_assignments=facet_assignments,
     )
 
 def print_analysis_report(
@@ -751,6 +787,165 @@ def print_description_debug(result, contains_list, prefix_list, suffix_list):
 
     print()
     print(f"Total displayed: {len(matches)} transactions")
+
+def print_facet_debug(result, facets_to_display):
+    """Print all transactions that belong to any of the given facets."""
+    if not facets_to_display:
+        return
+
+    print()
+    print("============================================================")
+    print("DEBUG: TRANSACTIONS BY FACET")
+    print("============================================================")
+    print()
+
+    # Build a master list of (tx, category, rule_id, facets)
+    all_entries = []
+
+    # 1. Categorised transactions
+    for cat_id, entries in result.category_transactions.items():
+        for tx, rule_id in entries:
+            assigned_facets = result.facet_assignments.get(tx, [])
+            all_entries.append((tx, cat_id, rule_id, assigned_facets))
+
+    # 2. Uncategorised transactions
+    for tx in result.uncategorised:
+        assigned_facets = result.facet_assignments.get(tx, [])
+        all_entries.append((tx, "UNCATEGORISED", None, assigned_facets))
+
+    # Filter by facets
+    matches = []
+    for tx, category, rule_id, assigned_facets in all_entries:
+        if any(f in assigned_facets for f in facets_to_display):
+            matches.append((tx, category, rule_id, assigned_facets))
+
+    if not matches:
+        print("No transactions matched the requested facets.")
+        return
+
+    # Header
+    print(f"{'Line':>5}  {'Date':<12}  {'Type':<4}  {'Amount':>10}  {'Category':<22}  {'Rule':<20}  {'Facets':<30}  Description")
+    print("-" * 140)
+
+    # Sort by line number
+    matches.sort(key=lambda x: x[0].line_number)
+
+    for tx, category, rule_id, assigned_facets in matches:
+        amount = tx.credit if tx.credit else tx.debit
+        rule_display = rule_id if rule_id else "N/A"
+        cat_display = category[:22]
+        facets_display = ", ".join(assigned_facets) if assigned_facets else "NONE"
+        print(
+            f"{tx.line_number:>5}  "
+            f"{tx.date.strftime('%Y-%m-%d'):<12}  "
+            f"{tx.transaction_type:<4}  "
+            f"{amount:>10,.2f}  "
+            f"{cat_display:<22}  "
+            f"{rule_display:<20}  "
+            f"{facets_display:<30}  "
+            f"{tx.description}"
+        )
+
+    print()
+    print(f"Total displayed: {len(matches)} transactions")
+
+def validate_compulsory_facets(result, required_prefixes):
+    """Check that every transaction has at least one facet from each required prefix."""
+    errors = []
+    for tx, assigned_facets in result.facet_assignments.items():
+        for prefix in required_prefixes:
+            if not any(f.startswith(prefix) for f in assigned_facets):
+                errors.append(
+                    f"Line {tx.line_number}: {tx.date.strftime('%Y-%m-%d')} "
+                    f"{tx.transaction_type} {tx.description} "
+                    f"has no {prefix} facet. Current: {assigned_facets or 'NONE'}"
+                )
+                break  # Only report once per transaction (first missing prefix)
+    return errors
+
+def print_facet_summary(result, facet_group_name, facet_definitions):
+    """
+    Print a summary table grouped by facet codes in the specified group.
+    facet_definitions: dict from the YAML (e.g., facets: {IHT: {codes: {...}}})
+    """
+    if not facet_group_name:
+        return
+
+    if facet_group_name not in facet_definitions:
+        print(f"ERROR: Facet group '{facet_group_name}' not found in control file.")
+        return
+
+    group = facet_definitions[facet_group_name]
+    codes_metadata = group["codes"]  # dict: code -> {description, suppress_in_report}
+
+    # Build a dictionary: facet_code -> totals
+    facet_totals = {}
+    for code, meta in codes_metadata.items():
+        facet_totals[code] = {
+            "count": 0,
+            "total_credit": Decimal("0"),
+            "total_debit": Decimal("0"),
+        }
+
+    # Process all transactions
+    for tx, assigned_facets in result.facet_assignments.items():
+        for facet in assigned_facets:
+            if facet in facet_totals:
+                facet_totals[facet]["count"] += 1
+                facet_totals[facet]["total_credit"] += tx.credit
+                facet_totals[facet]["total_debit"] += tx.debit
+
+    # Print the summary
+    print()
+    print("============================================================")
+    print(f"FACET SUMMARY: {facet_group_name}")
+    print(f"Description: {group['description']}")
+    print("============================================================")
+    print()
+
+    print(f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}")
+    print("-" * 110)
+
+    total_count = 0
+    total_in = Decimal("0")
+    total_out = Decimal("0")
+
+    for facet_code in sorted(facet_totals):
+        meta = codes_metadata.get(facet_code, {})
+        # Skip facets marked for suppression
+        if meta.get("suppress_in_report", False):
+            continue
+
+        totals = facet_totals[facet_code]
+        # Optionally skip zero transactions (optional but keeps output clean)
+        if totals["count"] == 0 and totals["total_credit"] == 0 and totals["total_debit"] == 0:
+            continue
+
+        desc = meta.get("description", "")
+        print(
+            f"{facet_code:<30} "
+            f"{desc[:55]:<55} "
+            f"{totals['count']:>8} "
+            f"{totals['total_credit']:>15,.2f} "
+            f"{totals['total_debit']:>15,.2f}"
+        )
+
+        total_count += totals["count"]
+        total_in += totals["total_credit"]
+        total_out += totals["total_debit"]
+
+    print("-" * 110)
+    print(
+        f"{'TOTAL':<30} "
+        f"{'':<55} "
+        f"{total_count:>8} "
+        f"{total_in:>15,.2f} "
+        f"{total_out:>15,.2f}"
+    )
+
+    print()
+    print(f"Net surplus (in - out): £{total_in - total_out:,.2f}")
+
 
 TRANSACTION_RULES = {
     "BGC": {"credit_only": True},
@@ -1138,6 +1333,8 @@ def main():
 
     args = parse_arguments()
 
+    has_facet_errors = False
+
     if not os.path.isfile(args.statement):
         print_error(
             f"statement file not found: {args.statement}",
@@ -1239,9 +1436,7 @@ def main():
                     "--control-file"
                 )
 
-            control = load_control_file(
-                args.control_file
-            )
+            control = load_control_file(args.control_file)
 
             analysis = (
                 analyse_transactions(
@@ -1250,9 +1445,13 @@ def main():
                 )
             )
 
-            print_analysis_report(
-                analysis
-            )
+            if args.facet_report:
+                if not hasattr(control, 'facet_definitions'):
+                    print_error("Facet definitions not loaded in control file.", stats)
+                else:
+                    print_facet_summary(analysis, args.facet_report, control.facet_definitions)
+
+            print_analysis_report(analysis)
 
         if args.print_report:
             print_report(
@@ -1263,6 +1462,30 @@ def main():
                 closing_balance,
             )
 
+        if args.analyse:
+            # Validate compulsory facets (hardcoded to IHT_ for now)
+            required_prefixes = ["IHT_"]
+            facet_errors = validate_compulsory_facets(analysis, required_prefixes)
+            
+            if facet_errors:
+                print()
+                print("============================================================")
+                print("COMPULSORY FACET VALIDATION ERRORS")
+                print("============================================================")
+                for err in facet_errors:
+                    print(f"ERROR: {err}")
+                print()
+                
+                # Always exit with failure if there are errors (even with --relax-facet-checks)
+                # But don't return immediately - let the debug prints run first
+                # So store a flag to return 1 at the end
+                has_facet_errors = True
+            else:
+                has_facet_errors = False
+
+        if args.display_facet:
+            print_facet_debug(analysis, args.display_facet)
+        
         if args.display_category:
             print_category_debug(analysis, args.display_category)
 
@@ -1298,6 +1521,8 @@ def main():
             f"{stats.error_count}"
         )
 
+        if has_facet_errors:
+            return 1
         return 0
 
     except Exception as exc:
