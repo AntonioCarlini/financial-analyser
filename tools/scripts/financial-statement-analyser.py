@@ -1448,16 +1448,71 @@ def print_report(
     else:
         print("Reconciliation  : FAIL")
 
+def print_monthly_summary(monthly, total_in, total_out):
+    """Print just the monthly summary table (no reconciliation)."""
+    MONTH_WIDTH = 10
+    AMOUNT_WIDTH = 12
+    COLUMN_GAP = " " * 5
+
+    print()
+    print("============================================================")
+    print("MONTHLY SUMMARY")
+    print("============================================================")
+    print()
+
+    print(
+        f"{'Month':<{MONTH_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Money In':>{AMOUNT_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Money Out':>{AMOUNT_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Net':>{AMOUNT_WIDTH}}"
+    )
+
+    print("-" * 60)
+
+    for month in sorted(monthly):
+        money_in = monthly[month]["money_in"]
+        money_out = monthly[month]["money_out"]
+        net = money_in - money_out
+        print(
+            f"{month:<{MONTH_WIDTH}}"
+            f"{COLUMN_GAP}"
+            f"£{money_in:>{AMOUNT_WIDTH-1},.2f}"
+            f"{COLUMN_GAP}"
+            f"£{money_out:>{AMOUNT_WIDTH-1},.2f}"
+            f"{COLUMN_GAP}"
+            f"£{net:>{AMOUNT_WIDTH-1},.2f}"
+        )
+
+    print("-" * 60)
+    net_total = total_in - total_out
+    print(
+        f"{'TOTAL':<{MONTH_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"£{total_in:>{AMOUNT_WIDTH-1},.2f}"
+        f"{COLUMN_GAP}"
+        f"£{total_out:>{AMOUNT_WIDTH-1},.2f}"
+        f"{COLUMN_GAP}"
+        f"£{net_total:>{AMOUNT_WIDTH-1},.2f}"
+    )
 
 def main():
-
     stats = AnalysisResults()
-
     args = parse_arguments()
-
     has_facet_errors = False
 
-    # If --data-file is provided, use it and exit after listing
+    # ------------------------------------------------------------------
+    # 1. Mutual exclusion: --data-file and --statement
+    # ------------------------------------------------------------------
+    if args.data_file and args.statement:
+        print_error("--data-file and --statement are mutually exclusive.", stats)
+        return 1
+
+    # ------------------------------------------------------------------
+    # 2. DATA-FILE MODE
+    # ------------------------------------------------------------------
     if args.data_file:
         if not os.path.isfile(args.data_file):
             print_error(f"data file not found: {args.data_file}", stats)
@@ -1469,71 +1524,141 @@ def main():
                 print_error(f"control file not found: {control_file_path}", stats)
                 return 1
 
-            # List the data file active contents
+            # Optional: list the data file contents in verbose mode
             if args.verbose:
                 list_data_file_info(tax_years, args.tax_year)
 
-            # Filter tax years
+            # Filter tax years if --tax-year was given
             if args.tax_year:
                 tax_years = [ty for ty in tax_years if ty['year'] in args.tax_year]
-            
-            # Load control file once
+                if not tax_years:
+                    print_error("No tax years match the filter.", stats)
+                    return 1
+
+            # Load control file once (shared across all years)
             control = load_control_file(control_file_path)
+
             # Process each tax year
             for ty in tax_years:
                 print()
                 print(f"Processing tax year: {ty['year']}")
                 print("-" * 50)
 
+                # 2a. Load all statements for this year
                 all_transactions = []
                 for stmt in ty.get('statements', []):
                     stmt_type = stmt['type']
                     stmt_file = stmt['file']
-                    transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
-                    all_transactions.extend(transactions)
+                    try:
+                        transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
+                        all_transactions.extend(transactions)
+                    except NotImplementedError as e:
+                        print_error(str(e), stats)
+                        # Continue to next statement rather than aborting
+                        continue
 
-                # Load extra info for this year
+                if not all_transactions:
+                    print_warning(f"No transactions loaded for {ty['year']}. Skipping.", stats)
+                    continue
+
+                # 2b. Load extra info (placeholder – will raise NotImplementedError)
                 if extra_info_path:
-                    extra_info = load_extra_information(extra_info_path, ty['year'])
-                    # ... merge into analysis ...
-                    # Run analysis on all_transactions
+                    try:
+                        extra_info = load_extra_information(extra_info_path, ty['year'])
+                        # TODO: merge extra_info into the analysis
+                    except NotImplementedError as e:
+                        print_warning(str(e), stats)
+
+                # 2c. Run analysis on combined transactions
                 analysis = analyse_transactions(all_transactions, control)
-                print_analysis_report(analysis)
+
+                # 2d. Validate compulsory facets (IHT_)
+                required_prefixes = ["IHT_"]
+                facet_errors = validate_compulsory_facets(analysis, required_prefixes)
+                if facet_errors:
+                    print()
+                    print("============================================================")
+                    print(f"COMPULSORY FACET VALIDATION ERRORS – {ty['year']}")
+                    print("============================================================")
+                    for err in facet_errors:
+                        print(f"ERROR: {err}")
+                    print()
+                    has_facet_errors = True
+
+                # 2e. Print reports (mirroring the single‑statement flow)
+                if args.facet_report:
+                    if not hasattr(control, 'facet_definitions'):
+                        print_error("Facet definitions not loaded in control file.", stats)
+                    else:
+                        print_facet_summary(analysis, args.facet_report, control.facet_definitions)
+
+                if args.analyse:
+                    print_analysis_report(analysis)
+
+                # 2f. Debug outputs
+                if args.display_facet:
+                    print_facet_debug(analysis, args.display_facet)
+
+                if args.display_category:
+                    print_category_debug(analysis, args.display_category)
+
+                if (args.display_description_contains or
+                    args.display_description_prefix or
+                    args.display_description_suffix):
+                    print_description_debug(
+                        analysis,
+                        args.display_description_contains,
+                        args.display_description_prefix,
+                        args.display_description_suffix,
+                    )
+
+                # 2g. Monthly summary (without ledger reconciliation)
+                if args.print_report:
+                    monthly, total_in, total_out = calculate_monthly_totals(all_transactions)
+                    print_monthly_summary(monthly, total_in, total_out)
+
+                # Optional: print a separator between years
+                print()
+
+            # After processing all years, print a final summary
+            print()
+            print("============================================================")
+            print("SUMMARY")
+            print("============================================================")
+            print()
+            if args.verbose:
+                print(f"PASS checks : {stats.pass_count}")
+            print(f"Warnings    : {stats.warning_count}")
+            print(f"Errors      : {stats.error_count}")
+
+            if has_facet_errors:
+                return 1
+            return 0
 
         except Exception as exc:
-            print_error(f"Failed to load data file: {exc}", stats)
+            print_error(f"Failed to process data file: {exc}", stats)
             return 1
 
-    # If --statement is not given and no --data-file, error
+    # ------------------------------------------------------------------
+    # 3. SINGLE‑STATEMENT MODE
+    # ------------------------------------------------------------------
     if not args.statement:
         print_error("Either --statement or --data-file must be provided", stats)
         return 1
 
     if not os.path.isfile(args.statement):
-        print_error(
-            f"statement file not found: {args.statement}",
-            stats,
-        )
+        print_error(f"statement file not found: {args.statement}", stats)
         return 1
 
     if args.control_file:
         if not os.path.isfile(args.control_file):
-            print_error(
-                f"control file not found: "
-                f"{args.control_file}",
-                stats,
-            )
+            print_error(f"control file not found: {args.control_file}", stats)
             return 1
-
         if not os.access(args.control_file, os.R_OK):
-            print_error(
-                f"control file not readable: "
-                f"{args.control_file}",
-                stats,
-            )
+            print_error(f"control file not readable: {args.control_file}", stats)
             return 1
 
-    # Check that --display-category implies --analyse and --control-file
+    # Check that debug flags imply --analyse and --control-file
     if args.display_category:
         if not args.analyse:
             print_error("--display-category requires --analyse", stats)
@@ -1542,7 +1667,6 @@ def main():
             print_error("--display-category requires --control-file", stats)
             return 1
 
-    # Check that description-debug flags imply --analyse and --control-file
     if (args.display_description_contains or
         args.display_description_prefix or
         args.display_description_suffix):
@@ -1554,64 +1678,26 @@ def main():
             return 1
 
     try:
-
-        # Use the dispatcher with "bank-lloyds" type as that's all that works right now
+        # Load the single statement
         transactions = load_statement_by_type("bank-lloyds", args.statement, args.verbose, stats)
 
         if not transactions:
-            raise RuntimeError(
-                "statement contains no transactions"
-            )
+            raise RuntimeError("statement contains no transactions")
 
         print_pass(f"{len(transactions)} transactions loaded", args.verbose, stats)
 
-        validate_transaction_types(
-            transactions,
-            args.verbose,
-            stats,
-        )
-
-        verify_reverse_chronological_order(
-            transactions,
-            args.verbose,
-            stats,
-        )
-
-        verify_tax_year(
-            transactions,
-            args.verbose,
-            stats,
-        )
-
-        opening_balance, closing_balance = (
-            verify_balances(
-                transactions,
-                args.verbose,
-                stats,
-            )
-        )
-
-        monthly, total_in, total_out = (
-            calculate_monthly_totals(
-                transactions
-            )
-        )
+        validate_transaction_types(transactions, args.verbose, stats)
+        verify_reverse_chronological_order(transactions, args.verbose, stats)
+        verify_tax_year(transactions, args.verbose, stats)
+        opening_balance, closing_balance = verify_balances(transactions, args.verbose, stats)
+        monthly, total_in, total_out = calculate_monthly_totals(transactions)
 
         if args.analyse:
             if not args.control_file:
-                raise RuntimeError(
-                    "--analyse requires "
-                    "--control-file"
-                )
+                raise RuntimeError("--analyse requires --control-file")
 
             control = load_control_file(args.control_file)
-
-            analysis = (
-                analyse_transactions(
-                    transactions,
-                    control,
-                )
-            )
+            analysis = analyse_transactions(transactions, control)
 
             if args.facet_report:
                 if not hasattr(control, 'facet_definitions'):
@@ -1622,19 +1708,12 @@ def main():
             print_analysis_report(analysis)
 
         if args.print_report:
-            print_report(
-                monthly,
-                total_in,
-                total_out,
-                opening_balance,
-                closing_balance,
-            )
+            print_report(monthly, total_in, total_out, opening_balance, closing_balance)
 
         if args.analyse:
-            # Validate compulsory facets (hardcoded to IHT_ for now)
+            # Validate compulsory facets (IHT_)
             required_prefixes = ["IHT_"]
             facet_errors = validate_compulsory_facets(analysis, required_prefixes)
-            
             if facet_errors:
                 print()
                 print("============================================================")
@@ -1643,13 +1722,7 @@ def main():
                 for err in facet_errors:
                     print(f"ERROR: {err}")
                 print()
-                
-                # Always exit with failure if there are errors (even with --relax-facet-checks)
-                # But don't return immediately - let the debug prints run first
-                # So store a flag to return 1 at the end
                 has_facet_errors = True
-            else:
-                has_facet_errors = False
 
         if args.display_facet:
             print_facet_debug(analysis, args.display_facet)
@@ -1672,32 +1745,18 @@ def main():
         print("SUMMARY")
         print("============================================================")
         print()
-
         if args.verbose:
-            print(
-                f"PASS checks : "
-                f"{stats.pass_count}"
-            )
-
-        print(
-            f"Warnings    : "
-            f"{stats.warning_count}"
-        )
-
-        print(
-            f"Errors      : "
-            f"{stats.error_count}"
-        )
+            print(f"PASS checks : {stats.pass_count}")
+        print(f"Warnings    : {stats.warning_count}")
+        print(f"Errors      : {stats.error_count}")
 
         if has_facet_errors:
             return 1
         return 0
 
     except Exception as exc:
-
         print_error(str(exc), stats)
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())
