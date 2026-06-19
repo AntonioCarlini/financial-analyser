@@ -35,8 +35,90 @@ Assumptions:
       No attempt is made to distinguish income,
       transfers, gifts, investments, or savings movements.
 
-Author: Antonio
-Licence: Private use
+Command-line options:
+
+  --analyse
+        Run the full analysis (categorisation, summarisation, reporting).
+        Without this flag, most other flags have no effect.
+        Default: False
+
+  --control-file CONTROL_FILE
+        Path to the YAML control file containing:
+          - people definitions
+          - category definitions with default facets
+          - facet definitions (IHT, etc.)
+          - classification rules
+        Required when using --statement (not required when using --data-file,
+        as the control file is specified inside the data file).
+
+  --data-file DATA_FILE
+        YAML data file containing tax years and statement files.
+        Replaces --statement for multi-year, multi-account analysis.
+        Mutually exclusive with --statement.
+        If provided, --control-file is read from the data file.
+
+  --statement STATEMENT
+        Single CSV bank statement file (Lloyds format only).
+        Mutually exclusive with --data-file.
+        Requires --control-file and --analyse.
+
+  --tax-year TAX_YEAR
+        Filter which tax years to process when using --data-file.
+        Repeatable (e.g., --tax-year 2023-2024 --tax-year 2024-2025).
+        If not specified, all tax years in the data file are processed.
+        Has no effect with --statement.
+
+  --display-category CATEGORY
+        Debug: show every transaction assigned to the specified category.
+        Repeatable (OR logic: show transactions in any specified category).
+        Requires --analyse and --control-file.
+
+  --display-description-contains TEXT
+        Debug: show transactions whose description contains TEXT.
+        Repeatable (OR logic).
+        Requires --analyse and --control-file.
+
+  --display-description-prefix TEXT
+        Debug: show transactions whose description starts with TEXT.
+        Repeatable (OR logic).
+        Requires --analyse and --control-file.
+
+  --display-description-suffix TEXT
+        Debug: show transactions whose description ends with TEXT.
+        Repeatable (OR logic).
+        Requires --analyse and --control-file.
+
+  --display-facet FACET
+        Debug: show transactions assigned to the specified facet code.
+        Repeatable (OR logic).
+        Requires --analyse and --control-file.
+
+  --facet-report FACET_GROUP
+        Generate a summary report grouped by facets in the specified group
+        (e.g., --facet-report IHT). This produces a table suitable for
+        filling in IHT403 or similar forms.
+        Requires --analyse and --control-file.
+
+  --print-report
+        Print the monthly summary (month-by-month money in/out/net).
+        In single-statement mode, also prints ledger reconciliation.
+        In data-file mode, prints only the monthly summary (no reconciliation).
+        Does not require --analyse.
+
+  --relax-facet-checks / --no-relax-facet-checks
+        Control facet validation behaviour.
+        --relax-facet-checks (default): collect all validation errors
+        before reporting, then exit with failure if any found.
+        --no-relax-facet-checks: exit immediately on first error.
+        Default: True (--relax-facet-checks)
+
+  --verbose / --no-verbose
+        Enable or disable verbose output (PASS messages, etc.).
+        Default: False (--no-verbose)
+
+  --help (-h)
+        Show this help message and exit.
+
 """
 
 import argparse
