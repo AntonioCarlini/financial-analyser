@@ -1096,7 +1096,7 @@ def validate_transaction_types(
         stats,
     )
 
-def load_statement_lloyds(filename, stats):
+def load_statement_lloyds(filename, verbose, stats):
     transactions = []
 
     expected_sort_code = None
@@ -1105,7 +1105,7 @@ def load_statement_lloyds(filename, stats):
     unknown_transaction_types = set()
 
     with open(filename, newline="", encoding="utf-8") as csvfile:
-        print_pass(f"Analysing statment {filename}", True, stats)
+        print_pass(f"Analysing statment {filename}", verbose, stats)
         reader = csv.DictReader(csvfile)
 
         for line_number, row in enumerate(reader, start=2):
@@ -1183,31 +1183,31 @@ def load_statement_lloyds(filename, stats):
 
     return transactions
 
-def load_statement_monzo(filename, stats):
+def load_statement_monzo(filename, verbose, stats):
     """Load a Monzo statement CSV."""
     raise NotImplementedError(f"Fatal error: no support for processing Monzo statement '{filename}'")
 
-def load_statement_amex(filename, stats):
+def load_statement_amex(filename, verbose, stats):
     """Load an American Express credit card statement CSV."""
     raise NotImplementedError(f"Fatal error: no support for processing Amex statement '{filename}'")
 
-def load_statement_capital_one(filename, stats):
+def load_statement_capital_one(filename, verbose, stats):
     """Load a Capital One credit card statement CSV."""
     raise NotImplementedError(f"Fatal error: no support for processing Capital One statement '{filename}'")
 
-def load_statement_vanguard(filename, stats):
+def load_statement_vanguard(filename, verbose, stats):
     """Load a Vanguard ISA statement CSV."""
     raise NotImplementedError(f"Fatal error: no support for processing Vanguard statement '{filename}'")
 
-def load_statement_interest(filename, stats):
+def load_statement_interest(filename, verbose, stats):
     """Load an interest certificate or summary."""
     raise NotImplementedError(f"Fatal error: no support for processing interest statement '{filename}'")
 
-def load_statement_pension(filename, stats):
+def load_statement_pension(filename, verbose, stats):
     """Load a pension statement CSV."""
     raise NotImplementedError(f"Fatal error: no support for processing pension statement '{filename}'")
 
-def load_statement_by_type(statement_type, filename, stats):
+def load_statement_by_type(statement_type, filename, verbose, stats):
     """
     Dispatch to the appropriate statement loader based on the type string.
     Returns a list of Transaction objects.
@@ -1220,15 +1220,13 @@ def load_statement_by_type(statement_type, filename, stats):
         "isa-vanguard": load_statement_vanguard,
         "interest": load_statement_interest,
         "pension": load_statement_pension,
-        # Keep backward compatibility
-        "bank": load_statement_lloyds,  # If someone uses the old 'bank' type
     }
 
     loader = dispatcher.get(statement_type)
     if loader is None:
         raise ValueError(f"Unknown statement type: '{statement_type}'")
 
-    return loader(filename, stats)
+    return loader(filename, verbose, stats)
 
 def verify_reverse_chronological_order(transactions, verbose,  stats):
     previous = None
@@ -1491,7 +1489,7 @@ def main():
                 for stmt in ty.get('statements', []):
                     stmt_type = stmt['type']
                     stmt_file = stmt['file']
-                    transactions = load_statement_by_type(stmt_type, stmt_file, stats)
+                    transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
                     all_transactions.extend(transactions)
 
                 # Load extra info for this year
@@ -1557,8 +1555,8 @@ def main():
 
     try:
 
-        # Use the dispatcher with "bank" type for backward compatibility
-        transactions = load_statement_by_type("bank", args.statement, stats)
+        # Use the dispatcher with "bank-lloyds" type as that's all that works right now
+        transactions = load_statement_by_type("bank-lloyds", args.statement, args.verbose, stats)
 
         if not transactions:
             raise RuntimeError(
