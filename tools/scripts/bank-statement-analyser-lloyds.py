@@ -94,12 +94,16 @@ class AnalysisResults:
 @dataclass(frozen=True)
 class Transaction:
     line_number: int
+
     date: datetime
+
     transaction_type: str
     description: str
+
     debit: Decimal
     credit: Decimal
     balance: Decimal
+
     sort_code: str
     account_number: str
 
@@ -130,14 +134,18 @@ class Rule:
     transaction_types: set[str] | None
     direction: str | None
     when: list[dict] | None = None
-    facets: list[str] | None = None   # NEW: rule-level override
+    facets: list[str] | None = None
 
 @dataclass
 class ControlFile:
     people: dict[str, Person]
+
     categories: dict[str, Category]
+
     rules: list[Rule]
+
     default_category: str
+
     default_ownership: dict[str, int]
     facet_definitions: dict = field(default_factory=dict)
 
@@ -149,6 +157,7 @@ class CategorySummary:
 
     total_credit: Decimal = Decimal("0")
     total_debit: Decimal = Decimal("0")
+
 
 @dataclass
 class AnalysisResult:
@@ -262,6 +271,11 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--data-file",
+        help="YAML data file containing tax years and statements (replaces --statement)"
+    )
+
+    parser.add_argument(
         "--display-category",
         action="append",
         default=[],
@@ -311,16 +325,24 @@ def parse_arguments():
 	    default=True,
 	    help="Collect all facet validation errors (don't stop early). Default: True",
 	)
+
     parser.add_argument(
         "--statement",
-        required=True,
+        ## TODO required=True,
         help="CSV bank statement"
+    )
+
+    parser.add_argument(
+        "--tax-year",
+        action="append",
+        default=[],
+        help="Filter which tax years to process (repeatable, e.g., --tax-year 2024-2025)"
     )
 
     parser.add_argument(
         "--verbose",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Enable verbose output"
     )
 
@@ -336,6 +358,77 @@ def parse_decimal(value):
     value = value.replace(",", "")
 
     return Decimal(value)
+
+def load_data_file(filename):
+    """
+    Load the YAML data file and resolve relative paths.
+    Returns a tuple: (control_file_path, list_of_tax_years)
+    where each tax_year is a dict: {'year': '...', 'statements': [...]}
+    """
+    base_dir = os.path.dirname(os.path.abspath(filename))
+
+    with open(filename, 'r', encoding='utf-8') as f:
+        raw = yaml.safe_load(f)
+
+    control_file = raw.get('control_file')
+    if control_file:
+        # Resolve relative to data file's directory
+        control_file = os.path.join(base_dir, control_file)
+    else:
+        raise ValueError("data file must contain 'control_file' key")
+
+    extra_info_file = raw.get('extra_info_file')
+    if extra_info_file:
+        extra_info_file = os.path.join(base_dir, extra_info_file)
+    
+    tax_years = raw.get('tax_years', [])
+    if not tax_years:
+        raise ValueError("data file must contain at least one tax_year")
+
+    # Resolve statement file paths
+    for ty in tax_years:
+        for stmt in ty.get('statements', []):
+            stmt['file'] = os.path.join(base_dir, stmt['file'])
+
+    return control_file, tax_years, extra_info_file
+
+def load_extra_information(filename, tax_year):
+    """
+    Load extra information (interest, dividends, etc.) for a specific tax year.
+    """
+    raise NotImplementedError(
+        f"Fatal error: no support for loading extra information from '{filename}' "
+        f"for tax year '{tax_year}'"
+    )
+
+def list_data_file_info(tax_years, filter_years=None):
+    """
+    Print the tax years and statements that would be processed.
+    If filter_years is a list, only show those years.
+    """
+    if filter_years:
+        filtered = [ty for ty in tax_years if ty['year'] in filter_years]
+    else:
+        filtered = tax_years
+
+    if not filtered:
+        print("No tax years match the filter.")
+        return
+
+    print()
+    print("============================================================")
+    print("DATA FILE SUMMARY")
+    print("============================================================")
+    print()
+
+    for ty in filtered:
+        print(f"Tax Year: {ty['year']}")
+        if 'description' in ty:
+            print(f"  Description: {ty['description']}")
+        print(f"  Statements:")
+        for stmt in ty.get('statements', []):
+            print(f"    - Type: {stmt['type']:15} File: {stmt['file']}")
+        print()
 
 def load_control_file(filename):
 
@@ -358,11 +451,10 @@ def load_control_file(filename):
     ):
 
         categories[category_id] = Category(
-		    id=category_id,
-		    description=category_data["description"],
+            id=category_id,
+            description=category_data["description"],
 		    default_facets=category_data.get("default_facets", []),
-		)
-
+        )
 
     # Load facet definitions with full metadata
     facet_definitions = {}
@@ -493,6 +585,7 @@ def analyse_transactions(
     warnings = []
 
     category_transactions = {cat_id: [] for cat_id in control.categories}
+
     facet_assignments = {}
 
     for tx in transactions:
@@ -563,7 +656,7 @@ def analyse_transactions(
         category_transactions[category_id].append(
             (tx, matched_rule.id if matched_rule else None)
         )
-        
+
 		# Resolve facets
         if matched_rule and matched_rule.facets is not None:
             assigned_facets = matched_rule.facets
@@ -588,20 +681,12 @@ def analyse_transactions(
         facet_assignments=facet_assignments,
     )
 
-def print_analysis_report(
-    result,
-):
+def print_analysis_report(result):
 
     print()
-    print(
-        "============================================================"
-    )
-    print(
-        "CATEGORY SUMMARY"
-    )
-    print(
-        "============================================================"
-    )
+    print("============================================================")
+    print("CATEGORY SUMMARY")
+    print("============================================================")
     print()
 
     print(
@@ -613,9 +698,7 @@ def print_analysis_report(
 
     print("-" * 60)
 
-    for category_id in sorted(
-        result.summaries
-    ):
+    for category_id in sorted(result.summaries):
 
         summary = (
             result.summaries[
@@ -946,7 +1029,6 @@ def print_facet_summary(result, facet_group_name, facet_definitions):
     print()
     print(f"Net surplus (in - out): £{total_in - total_out:,.2f}")
 
-
 TRANSACTION_RULES = {
     "BGC": {"credit_only": True},
     "CHQ": {"debit_only": True},
@@ -1014,7 +1096,7 @@ def validate_transaction_types(
         stats,
     )
 
-def load_statement(filename, stats):
+def load_statement_lloyds(filename, stats):
     transactions = []
 
     expected_sort_code = None
@@ -1101,12 +1183,54 @@ def load_statement(filename, stats):
 
     return transactions
 
+def load_statement_monzo(filename, stats):
+    """Load a Monzo statement CSV."""
+    raise NotImplementedError(f"Fatal error: no support for processing Monzo statement '{filename}'")
 
-def verify_reverse_chronological_order(
-    transactions,
-    verbose,
-    stats,
-):
+def load_statement_amex(filename, stats):
+    """Load an American Express credit card statement CSV."""
+    raise NotImplementedError(f"Fatal error: no support for processing Amex statement '{filename}'")
+
+def load_statement_capital_one(filename, stats):
+    """Load a Capital One credit card statement CSV."""
+    raise NotImplementedError(f"Fatal error: no support for processing Capital One statement '{filename}'")
+
+def load_statement_vanguard(filename, stats):
+    """Load a Vanguard ISA statement CSV."""
+    raise NotImplementedError(f"Fatal error: no support for processing Vanguard statement '{filename}'")
+
+def load_statement_interest(filename, stats):
+    """Load an interest certificate or summary."""
+    raise NotImplementedError(f"Fatal error: no support for processing interest statement '{filename}'")
+
+def load_statement_pension(filename, stats):
+    """Load a pension statement CSV."""
+    raise NotImplementedError(f"Fatal error: no support for processing pension statement '{filename}'")
+
+def load_statement_by_type(statement_type, filename, stats):
+    """
+    Dispatch to the appropriate statement loader based on the type string.
+    Returns a list of Transaction objects.
+    """
+    dispatcher = {
+        "bank-lloyds": load_statement_lloyds,
+        "debit-monzo": load_statement_monzo,
+        "credit-card-amex": load_statement_amex,
+        "credit-card-capital-one": load_statement_capital_one,
+        "isa-vanguard": load_statement_vanguard,
+        "interest": load_statement_interest,
+        "pension": load_statement_pension,
+        # Keep backward compatibility
+        "bank": load_statement_lloyds,  # If someone uses the old 'bank' type
+    }
+
+    loader = dispatcher.get(statement_type)
+    if loader is None:
+        raise ValueError(f"Unknown statement type: '{statement_type}'")
+
+    return loader(filename, stats)
+
+def verify_reverse_chronological_order(transactions, verbose,  stats):
     previous = None
 
     for tx in transactions:
@@ -1335,6 +1459,58 @@ def main():
 
     has_facet_errors = False
 
+    # If --data-file is provided, use it and exit after listing
+    if args.data_file:
+        if not os.path.isfile(args.data_file):
+            print_error(f"data file not found: {args.data_file}", stats)
+            return 1
+
+        try:
+            control_file_path, tax_years, extra_info_path = load_data_file(args.data_file)
+            if not os.path.isfile(control_file_path):
+                print_error(f"control file not found: {control_file_path}", stats)
+                return 1
+
+            # List the data file active contents
+            if args.verbose:
+                list_data_file_info(tax_years, args.tax_year)
+
+            # Filter tax years
+            if args.tax_year:
+                tax_years = [ty for ty in tax_years if ty['year'] in args.tax_year]
+            
+            # Load control file once
+            control = load_control_file(control_file_path)
+            # Process each tax year
+            for ty in tax_years:
+                print()
+                print(f"Processing tax year: {ty['year']}")
+                print("-" * 50)
+
+                all_transactions = []
+                for stmt in ty.get('statements', []):
+                    stmt_type = stmt['type']
+                    stmt_file = stmt['file']
+                    transactions = load_statement_by_type(stmt_type, stmt_file, stats)
+                    all_transactions.extend(transactions)
+
+                # Load extra info for this year
+                if extra_info_path:
+                    extra_info = load_extra_information(extra_info_path, ty['year'])
+                    # ... merge into analysis ...
+                    # Run analysis on all_transactions
+                analysis = analyse_transactions(all_transactions, control)
+                print_analysis_report(analysis)
+
+        except Exception as exc:
+            print_error(f"Failed to load data file: {exc}", stats)
+            return 1
+
+    # If --statement is not given and no --data-file, error
+    if not args.statement:
+        print_error("Either --statement or --data-file must be provided", stats)
+        return 1
+
     if not os.path.isfile(args.statement):
         print_error(
             f"statement file not found: {args.statement}",
@@ -1381,21 +1557,15 @@ def main():
 
     try:
 
-        transactions = load_statement(
-            args.statement,
-            stats,
-        )
+        # Use the dispatcher with "bank" type for backward compatibility
+        transactions = load_statement_by_type("bank", args.statement, stats)
 
         if not transactions:
             raise RuntimeError(
                 "statement contains no transactions"
             )
 
-        print_pass(
-            f"{len(transactions)} transactions loaded",
-            args.verbose,
-            stats,
-        )
+        print_pass(f"{len(transactions)} transactions loaded", args.verbose, stats)
 
         validate_transaction_types(
             transactions,
@@ -1485,7 +1655,7 @@ def main():
 
         if args.display_facet:
             print_facet_debug(analysis, args.display_facet)
-        
+
         if args.display_category:
             print_category_debug(analysis, args.display_category)
 
@@ -1498,7 +1668,7 @@ def main():
                 args.display_description_prefix,
                 args.display_description_suffix,
             )
-        
+
         print()
         print("============================================================")
         print("SUMMARY")
