@@ -140,7 +140,27 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from dataclasses import dataclass, field
+
+from financial_statement_analyser.core.types import (
+    AnalysisResult,
+    AnalysisResults,
+    Category,
+    CategorySummary,
+    ControlFile,
+    MatchCondition,
+    Person,
+    Rule,
+    Transaction,
+)
+
+from financial_statement_analyser.core.utils import (
+    print_pass,
+    print_warning,
+    print_error,
+    parse_date,
+    parse_tax_year,
+    parse_decimal,
+)
 
 ALLOWED_DAYS_GAP_AT_START = 9
 ALLOWED_DAYS_GAP_AT_END = 5
@@ -173,93 +193,6 @@ KNOWN_TRANSACTION_TYPES = {
     "TFR",
 }
 
-
-@dataclass
-class AnalysisResults:
-    pass_count: int = 0
-    warning_count: int = 0
-    error_count: int = 0
-
-
-# Must be frozen as it is now used as a key in the facet_assignments dictionary
-@dataclass(frozen=True)
-class Transaction:
-    line_number: int
-
-    date: datetime
-
-    transaction_type: str
-    description: str
-
-    debit: Decimal
-    credit: Decimal
-    balance: Decimal
-
-    sort_code: str
-    account_number: str
-
-@dataclass
-class Person:
-    id: str
-    full_name: str
-
-
-@dataclass
-class Category:
-    id: str
-    description: str
-    default_facets: list[str] = field(default_factory=list)
-
-@dataclass
-class MatchCondition:
-    type: str   # 'description', 'prefix', (later 'regex', etc.)
-    value: str
-
-@dataclass
-class Rule:
-    id: str
-    priority: int
-    conditions: list[MatchCondition]
-    category: str
-    ownership: dict[str, int]
-    transaction_types: set[str] | None
-    direction: str | None
-    when: list[dict] | None = None
-    facets: list[str] | None = None
-
-@dataclass
-class ControlFile:
-    people: dict[str, Person]
-    categories: dict[str, Category]
-    default_category: str
-    default_ownership: dict[str, int]
-    facet_definitions: dict = field(default_factory=dict)
-    statement_handling: dict[str, str] = field(default_factory=dict)
-
-@dataclass
-class CategorySummary:
-    category: str
-
-    transaction_count: int = 0
-
-    total_credit: Decimal = Decimal("0")
-    total_debit: Decimal = Decimal("0")
-
-    # Per-owner breakdowns
-    owner_counts: dict[str, int] = field(default_factory=dict)
-    owner_credits: dict[str, Decimal] = field(default_factory=dict)
-    owner_debits: dict[str, Decimal] = field(default_factory=dict)
-
-
-@dataclass
-class AnalysisResult:
-    summaries: dict[str, CategorySummary]
-    uncategorised: list[Transaction]
-    warnings: list[str]
-    category_transactions: dict[str, list[tuple[Transaction, str | None]]] = field(default_factory=dict)
-    facet_assignments: dict[Transaction, list[str]] = field(default_factory=dict)
-    tx_ownership: dict[Transaction, dict[str, int]] = field(default_factory=dict)
-
 # ------------------------------------------------------------
 # Condition checkers for "when" clauses
 # ------------------------------------------------------------
@@ -272,30 +205,6 @@ def register_checker(cond_type):
         CONDITION_CHECKERS[cond_type] = func
         return func
     return decorator
-
-def parse_date(date_str):
-    """Parse a date string in DD-MM-YYYY or YYYY-MM-DD format."""
-    date_str = date_str.strip()
-    # Try YYYY-MM-DD first
-    try:
-        return datetime.strptime(date_str, "%Y-%m-%d")
-    except ValueError:
-        pass
-    # Try DD-MM-YYYY
-    try:
-        return datetime.strptime(date_str, "%d-%m-%Y")
-    except ValueError:
-        raise ValueError(f"Unrecognised date format: {date_str}")
-
-def parse_tax_year(tax_year_str):
-    """Return (start_date, end_date) for a UK tax year like '2023-2024'."""
-    parts = tax_year_str.split('-')
-    if len(parts) != 2:
-        raise ValueError(f"Invalid tax year format: {tax_year_str}")
-    start_year = int(parts[0])
-    start = datetime(start_year, 4, 6)
-    end = datetime(start_year + 1, 4, 5)
-    return start, end
 
 # Condition checkers
 @register_checker("amount_range")
@@ -329,25 +238,6 @@ def check_date_range(tx, value):
     start = parse_date(start_str)
     end = parse_date(end_str)
     return start <= tx.date <= end
-
-
-
-def print_pass(message, verbose, stats):
-    stats.pass_count += 1
-
-    if verbose:
-        print(f"PASS: {message}")
-
-
-def print_warning(message, stats):
-    stats.warning_count += 1
-    print(f"WARNING: {message}")
-
-
-def print_error(message, stats):
-    stats.error_count += 1
-    print(f"ERROR: {message}")
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -449,16 +339,6 @@ def parse_arguments():
 
     return parser.parse_args()
 
-
-def parse_decimal(value):
-    value = value.strip()
-
-    if value == "":
-        return Decimal("0")
-
-    value = value.replace(",", "")
-
-    return Decimal(value)
 
 def load_data_file(filename):
     """

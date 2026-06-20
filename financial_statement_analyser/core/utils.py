@@ -1,0 +1,49 @@
+from datetime import datetime
+from decimal import Decimal
+
+def print_pass(message, verbose, stats):
+    stats.pass_count += 1
+
+    if verbose:
+        print(f"PASS: {message}")
+
+def print_warning(message, stats):
+    stats.warning_count += 1
+    print(f"WARNING: {message}")
+
+
+def print_error(message, stats):
+    stats.error_count += 1
+    print(f"ERROR: {message}")
+
+def parse_date(date_str):
+    """Parse a date string in DD-MM-YYYY or YYYY-MM-DD format."""
+    date_str = date_str.strip()
+    # Try YYYY-MM-DD first
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try DD-MM-YYYY
+    try:
+        return datetime.strptime(date_str, "%d-%m-%Y")
+    except ValueError:
+        raise ValueError(f"Unrecognised date format: {date_str}")
+
+def parse_tax_year(tax_year_str):
+    """Return (start_date, end_date) for a UK tax year like '2023-2024'."""
+    parts = tax_year_str.split('-')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid tax year format: {tax_year_str}")
+    start_year = int(parts[0])
+    start = datetime(start_year, 4, 6)
+    end = datetime(start_year + 1, 4, 5)
+    return start, end
+
+def parse_decimal(value):
+    value = value.strip()
+    if value == "":
+        return Decimal("0")
+    value = value.replace(",", "")
+    return Decimal(value)
+
