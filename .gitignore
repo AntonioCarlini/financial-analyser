@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Backup files (emacs, vim, etc.)
+*~
+
+# Data (sensitive)
+*.csv
+*.xlsx
+*.yaml
+*.yml
+
