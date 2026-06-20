@@ -99,6 +99,15 @@ Command-line options:
         filling in IHT403 or similar forms.
         Requires --analyse and --control-file.
 
+  --ownership-report [OWNER]
+        Enable ownership reporting. When specified, category and facet
+        summaries show breakdowns by owner.
+        With no value (--ownership-report), show all owners defined in
+        the control file.
+        With a value (--ownership-report ARC), show only that owner.
+        Requires --analyse and --control-file.
+        Default: False (no ownership reporting).
+
   --print-report
         Print the monthly summary (month-by-month money in/out/net).
         In single-statement mode, also prints ledger reconciliation.
@@ -142,7 +151,7 @@ ALLOWED_DAYS_GAP_AT_END = 5
 # CPT  - Cashpoint withdrawl
 # CSH  - Cash payment into account
 # DD   - Direct debit payment (out)
-# DEB  - 
+# DEB  -
 # DEP  - Deposit of cheque
 # FPI  - Fast Payment in
 # FPO  - Fast Payment out
@@ -239,6 +248,11 @@ class CategorySummary:
 
     total_credit: Decimal = Decimal("0")
     total_debit: Decimal = Decimal("0")
+
+    # Per-owner breakdowns
+    owner_counts: dict[str, int] = field(default_factory=dict)
+    owner_credits: dict[str, Decimal] = field(default_factory=dict)
+    owner_debits: dict[str, Decimal] = field(default_factory=dict)
 
 
 @dataclass
@@ -422,6 +436,14 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--ownership-report",
+        nargs='?',
+        const=True,
+        default=False,
+        help="Report ownership splits. With no value, show all owners. With a value, show only that owner (e.g., --ownership-report ARC)"
+    )
+
+    parser.add_argument(
         "--verbose",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -462,7 +484,7 @@ def load_data_file(filename):
     extra_info_file = raw.get('extra_info_file')
     if extra_info_file:
         extra_info_file = os.path.join(base_dir, extra_info_file)
-    
+
     tax_years = raw.get('tax_years', [])
     if not tax_years:
         raise ValueError("data file must contain at least one tax_year")
@@ -598,6 +620,15 @@ def load_control_file(filename):
         default_ownership=raw["defaults"]["ownership"],
         facet_definitions=facet_definitions,
     )
+
+def resolve_ownership(tx, matched_rule, control):
+    """
+    Determine the ownership split for a transaction.
+    Returns a dict: {person_id: percentage}
+    """
+    if matched_rule and matched_rule.ownership:
+        return matched_rule.ownership
+    return control.default_ownership
 
 def match_rule(tx, rule):
     # First check description/prefix conditions (OR logic)
@@ -755,6 +786,23 @@ def analyse_transactions(
         summary.total_credit += tx.credit
         summary.total_debit += tx.debit
 
+        # Track per-owner breakdowns
+        if matched_rule:
+            ownership = resolve_ownership(tx, matched_rule, control)
+        else:
+            ownership = control.default_ownership
+
+        for owner, percentage in ownership.items():
+            if percentage == 0:
+                continue
+            share = Decimal(percentage) / Decimal(100)
+            owner_credit = tx.credit * share
+            owner_debit = tx.debit * share
+
+            summary.owner_counts[owner] = summary.owner_counts.get(owner, 0) + 1
+            summary.owner_credits[owner] = summary.owner_credits.get(owner, Decimal("0")) + owner_credit
+            summary.owner_debits[owner] = summary.owner_debits.get(owner, Decimal("0")) + owner_debit
+
     return AnalysisResult(
         summaries=summaries,
         uncategorised=uncategorised,
@@ -763,37 +811,70 @@ def analyse_transactions(
         facet_assignments=facet_assignments,
     )
 
-def print_analysis_report(result):
+def print_analysis_report(result, control, ownership_report=None):
+    """
+    Print the category summary.
 
+    Args:
+        result: AnalysisResult object.
+        control: ControlFile object (for people list).
+        ownership_report: False (no ownership), True (all owners), or str (specific owner).
+    """
     print()
     print("============================================================")
     print("CATEGORY SUMMARY")
     print("============================================================")
     print()
 
-    print(
-        f"{'Category':30}"
-        f"{'Count':>8}"
-        f"{'In':>15}"
-        f"{'Out':>15}"
-    )
+    # Determine which owners to show
+    owners = []
+    if ownership_report:
+        if ownership_report is True:
+            # Show all owners defined in the control file
+            owners = sorted(control.people.keys())
+        elif isinstance(ownership_report, str):
+            owners = [ownership_report]
 
-    print("-" * 60)
+    # Build the two-line header if owners exist
+    if owners:
+        # First line: owner names, centered above their column groups
+        # Base indent: Category(30) + Count(8) + In(15) = 53
+        indent = 79
+        owner_line = " " * indent
+        for owner in owners:
+            # Each owner gets 3 columns: Count (8), In (15), Out (15) = 38 chars
+            # Plus 8 spaces gap between groups
+            owner_line += f"{owner:^45}   "
+        print(owner_line)
+
+        # Second line: column labels
+        header = f"{'Category':30} {'Count':>8} {'In':>15} {'Out':>15}"
+        for owner in owners:
+            header += " " * 8
+            header += f"{'Count':>8} {'In':>15} {'Out':>15}"
+        print(header)
+
+        line_len = 68 + (46 * len(owners))  # 68 base + 38 columns + 8 gap per owner
+        print("-" * line_len)
+    else:
+        header = f"{'Category':30} {'Count':>8} {'In':>15} {'Out':>15}"
+        print(header)
+        print("-" * 68)
 
     for category_id in sorted(result.summaries):
+        summary = result.summaries[category_id]
 
-        summary = (
-            result.summaries[
-                category_id
-            ]
-        )
+        line = f"{category_id:30} {summary.transaction_count:>8} {summary.total_credit:>15,.2f} {summary.total_debit:>15,.2f}"
 
-        print(
-            f"{category_id:30}"
-            f"{summary.transaction_count:>8}"
-            f"{summary.total_credit:>15,.2f}"
-            f"{summary.total_debit:>15,.2f}"
-        )
+        if owners:
+            for owner in owners:
+                count = summary.owner_counts.get(owner, 0)
+                credit = summary.owner_credits.get(owner, Decimal("0"))
+                debit = summary.owner_debits.get(owner, Decimal("0"))
+                line += " " * 8
+                line += f"{count:>8} {credit:>15,.2f} {debit:>15,.2f}"
+
+        print(line)
 
     print()
 
@@ -954,65 +1035,187 @@ def print_description_debug(result, contains_list, prefix_list, suffix_list):
     print(f"Total displayed: {len(matches)} transactions")
 
 def print_facet_debug(result, facets_to_display):
-    """Print all transactions that belong to any of the given facets."""
-    if not facets_to_display:
+    """
+    Print a summary table grouped by facet codes in the specified group.
+    facet_definitions: dict from the YAML (e.g., facets: {IHT: {codes: {...}}})
+
+    Args:
+        result: AnalysisResult object.
+        facet_group_name: The facet group to report (e.g., "IHT").
+        facet_definitions: The facet definitions from the control file.
+        control: ControlFile object (for people list).
+        ownership_report: False (no ownership), True (all owners), or str (specific owner).
+    """
+    if not facet_group_name:
         return
 
-    print()
-    print("============================================================")
-    print("DEBUG: TRANSACTIONS BY FACET")
-    print("============================================================")
-    print()
+    if facet_group_name not in facet_definitions:
+        print(f"ERROR: Facet group '{facet_group_name}' not found in control file.")
+        return
 
-    # Build a master list of (tx, category, rule_id, facets)
-    all_entries = []
+    group = facet_definitions[facet_group_name]
+    codes_metadata = group["codes"]
 
-    # 1. Categorised transactions
+    # Build a dictionary: facet_code -> totals
+    facet_totals = {}
+    for code, meta in codes_metadata.items():
+        facet_totals[code] = {
+            "count": 0,
+            "total_credit": Decimal("0"),
+            "total_debit": Decimal("0"),
+            "owner_counts": {},
+            "owner_credits": {},
+            "owner_debits": {},
+        }
+
+    # Determine owners
+    owners = []
+    if ownership_report:
+        if ownership_report is True:
+            # Show all owners defined in the control file
+            owners = sorted(control.people.keys())
+        elif isinstance(ownership_report, str):
+            owners = [ownership_report]
+
+    # Re-process transactions with ownership (using category_transactions)
     for cat_id, entries in result.category_transactions.items():
         for tx, rule_id in entries:
-            assigned_facets = result.facet_assignments.get(tx, [])
-            all_entries.append((tx, cat_id, rule_id, assigned_facets))
+            # Get ownership for this transaction
+            ownership = control.default_ownership
+            matched_rule = None
+            for rule in control.rules:
+                if match_rule(tx, rule):
+                    matched_rule = rule
+                    break
+            if matched_rule and matched_rule.ownership:
+                ownership = matched_rule.ownership
 
-    # 2. Uncategorised transactions
-    for tx in result.uncategorised:
-        assigned_facets = result.facet_assignments.get(tx, [])
-        all_entries.append((tx, "UNCATEGORISED", None, assigned_facets))
+            for facet in result.facet_assignments.get(tx, []):
+                if facet in facet_totals:
+                    facet_totals[facet]["count"] += 1
+                    facet_totals[facet]["total_credit"] += tx.credit
+                    facet_totals[facet]["total_debit"] += tx.debit
 
-    # Filter by facets
-    matches = []
-    for tx, category, rule_id, assigned_facets in all_entries:
-        if any(f in assigned_facets for f in facets_to_display):
-            matches.append((tx, category, rule_id, assigned_facets))
+                    for owner, percentage in ownership.items():
+                        if percentage == 0:
+                            continue
+                        share = Decimal(percentage) / Decimal(100)
+                        owner_credit = tx.credit * share
+                        owner_debit = tx.debit * share
 
-    if not matches:
-        print("No transactions matched the requested facets.")
-        return
+                        facet_totals[facet]["owner_counts"][owner] = (
+                            facet_totals[facet]["owner_counts"].get(owner, 0) + 1
+                        )
+                        facet_totals[facet]["owner_credits"][owner] = (
+                            facet_totals[facet]["owner_credits"].get(owner, Decimal("0")) + owner_credit
+                        )
+                        facet_totals[facet]["owner_debits"][owner] = (
+                            facet_totals[facet]["owner_debits"].get(owner, Decimal("0")) + owner_debit
+                        )
 
-    # Header
-    print(f"{'Line':>5}  {'Date':<12}  {'Type':<4}  {'Amount':>10}  {'Category':<22}  {'Rule':<20}  {'Facets':<30}  Description")
-    print("-" * 140)
+    # Print the summary
+    print()
+    print("============================================================")
+    print(f"FACET SUMMARY: {facet_group_name}")
+    print(f"Description: {group['description']}")
+    print("============================================================")
+    print()
 
-    # Sort by line number
-    matches.sort(key=lambda x: x[0].line_number)
+    # Build the two-line header if owners exist
+    if owners:
+        # First line: owner names, centered above their column groups
+        # Base indent: Facet(30) + Description(55) + Count(8) + In(15) = 108
+        indent = 108
+        owner_line = " " * indent
+        for owner in owners:
+            owner_line += f"{owner:^38}"
+        print(owner_line)
 
-    for tx, category, rule_id, assigned_facets in matches:
-        amount = tx.credit if tx.credit else tx.debit
-        rule_display = rule_id if rule_id else "N/A"
-        cat_display = category[:22]
-        facets_display = ", ".join(assigned_facets) if assigned_facets else "NONE"
-        print(
-            f"{tx.line_number:>5}  "
-            f"{tx.date.strftime('%Y-%m-%d'):<12}  "
-            f"{tx.transaction_type:<4}  "
-            f"{amount:>10,.2f}  "
-            f"{cat_display:<22}  "
-            f"{rule_display:<20}  "
-            f"{facets_display:<30}  "
-            f"{tx.description}"
+        # Second line: column labels
+        # Build the two-line header if owners exist
+        if owners:
+            # First line: owner names, centered above their column groups
+            # Base indent: Facet(30) + Description(55) + Count(8) + In(15) = 108
+            indent = 108
+            owner_line = " " * indent
+            for owner in owners:
+                # Each owner gets 3 columns: Count (8), In (15), Out (15) = 38 chars
+                # Plus 8 spaces gap between groups
+                owner_line += f"{owner:^38}"
+            print(owner_line)
+
+            # Second line: column labels
+            header = f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}"
+            for owner in owners:
+                header += " " * 8
+                header += f"{'Count':>8} {'In':>15} {'Out':>15}"
+            print(header)
+
+            line_len = 108 + (46 * len(owners))  # 108 base + 38 columns + 8 gap per owner
+            print("-" * line_len)
+        else:
+            header = f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}"
+            print(header)
+            print("-" * 110)
+    else:
+        header = f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}"
+        print(header)
+        print("-" * 110)
+
+    total_count = 0
+    total_in = Decimal("0")
+    total_out = Decimal("0")
+
+    for facet_code in sorted(facet_totals):
+        meta = codes_metadata.get(facet_code, {})
+        if meta.get("suppress_in_report", False):
+            continue
+
+        totals = facet_totals[facet_code]
+        if totals["count"] == 0 and totals["total_credit"] == 0 and totals["total_debit"] == 0:
+            continue
+
+        desc = meta.get("description", "")
+        line = (
+            f"{facet_code:<30} "
+            f"{desc[:55]:<55} "
+            f"{totals['count']:>8} "
+            f"{totals['total_credit']:>15,.2f} "
+            f"{totals['total_debit']:>15,.2f}"
         )
 
+        if owners:
+            for owner in owners:
+                count = totals["owner_counts"].get(owner, 0)
+                credit = totals["owner_credits"].get(owner, Decimal("0"))
+                debit = totals["owner_debits"].get(owner, Decimal("0"))
+                line += " " * 8
+                line += f"{count:>8} {credit:>15,.2f} {debit:>15,.2f}"
+        print(line)
+
+        total_count += totals["count"]
+        total_in += totals["total_credit"]
+        total_out += totals["total_debit"]
+
+    print("-" * line_len)
+    line = (
+        f"{'TOTAL':<30} "
+        f"{'':<55} "
+        f"{total_count:>8} "
+        f"{total_in:>15,.2f} "
+        f"{total_out:>15,.2f}"
+    )
+    if owners:
+        for owner in owners:
+            owner_count = sum(facet_totals[f]["owner_counts"].get(owner, 0) for f in facet_totals)
+            owner_credit = sum(facet_totals[f]["owner_credits"].get(owner, Decimal("0")) for f in facet_totals)
+            owner_debit = sum(facet_totals[f]["owner_debits"].get(owner, Decimal("0")) for f in facet_totals)
+            line += " " * 8
+            line += f"{owner_count:>8} {owner_credit:>15,.2f} {owner_debit:>15,.2f}"
+    print(line)
+
     print()
-    print(f"Total displayed: {len(matches)} transactions")
+    print(f"Net surplus (in - out): £{total_in - total_out:,.2f}")
 
 def validate_compulsory_facets(result, required_prefixes):
     """Check that every transaction has at least one facet from each required prefix."""
@@ -1028,10 +1231,17 @@ def validate_compulsory_facets(result, required_prefixes):
                 break  # Only report once per transaction (first missing prefix)
     return errors
 
-def print_facet_summary(result, facet_group_name, facet_definitions):
+def print_facet_summary(result, facet_group_name, facet_definitions, control, ownership_report=None):
     """
     Print a summary table grouped by facet codes in the specified group.
     facet_definitions: dict from the YAML (e.g., facets: {IHT: {codes: {...}}})
+
+    Args:
+        result: AnalysisResult object.
+        facet_group_name: The facet group to report (e.g., "IHT").
+        facet_definitions: The facet definitions from the control file.
+        control: ControlFile object (for people list).
+        ownership_report: False (no ownership), True (all owners), or str (specific owner).
     """
     if not facet_group_name:
         return
@@ -1041,7 +1251,7 @@ def print_facet_summary(result, facet_group_name, facet_definitions):
         return
 
     group = facet_definitions[facet_group_name]
-    codes_metadata = group["codes"]  # dict: code -> {description, suppress_in_report}
+    codes_metadata = group["codes"]
 
     # Build a dictionary: facet_code -> totals
     facet_totals = {}
@@ -1050,15 +1260,55 @@ def print_facet_summary(result, facet_group_name, facet_definitions):
             "count": 0,
             "total_credit": Decimal("0"),
             "total_debit": Decimal("0"),
+            "owner_counts": {},
+            "owner_credits": {},
+            "owner_debits": {},
         }
 
-    # Process all transactions
-    for tx, assigned_facets in result.facet_assignments.items():
-        for facet in assigned_facets:
-            if facet in facet_totals:
-                facet_totals[facet]["count"] += 1
-                facet_totals[facet]["total_credit"] += tx.credit
-                facet_totals[facet]["total_debit"] += tx.debit
+    # Determine owners
+    owners = []
+    if ownership_report:
+        if ownership_report is True:
+            # Show all owners defined in the control file
+            owners = sorted(control.people.keys())
+        elif isinstance(ownership_report, str):
+            owners = [ownership_report]
+
+    # Re-process transactions with ownership (using category_transactions)
+    for cat_id, entries in result.category_transactions.items():
+        for tx, rule_id in entries:
+            # Get ownership for this transaction
+            ownership = control.default_ownership
+            matched_rule = None
+            for rule in control.rules:
+                if match_rule(tx, rule):
+                    matched_rule = rule
+                    break
+            if matched_rule and matched_rule.ownership:
+                ownership = matched_rule.ownership
+
+            for facet in result.facet_assignments.get(tx, []):
+                if facet in facet_totals:
+                    facet_totals[facet]["count"] += 1
+                    facet_totals[facet]["total_credit"] += tx.credit
+                    facet_totals[facet]["total_debit"] += tx.debit
+
+                    for owner, percentage in ownership.items():
+                        if percentage == 0:
+                            continue
+                        share = Decimal(percentage) / Decimal(100)
+                        owner_credit = tx.credit * share
+                        owner_debit = tx.debit * share
+
+                        facet_totals[facet]["owner_counts"][owner] = (
+                            facet_totals[facet]["owner_counts"].get(owner, 0) + 1
+                        )
+                        facet_totals[facet]["owner_credits"][owner] = (
+                            facet_totals[facet]["owner_credits"].get(owner, Decimal("0")) + owner_credit
+                        )
+                        facet_totals[facet]["owner_debits"][owner] = (
+                            facet_totals[facet]["owner_debits"].get(owner, Decimal("0")) + owner_debit
+                        )
 
     # Print the summary
     print()
@@ -1068,8 +1318,31 @@ def print_facet_summary(result, facet_group_name, facet_definitions):
     print("============================================================")
     print()
 
-    print(f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}")
-    print("-" * 110)
+    # Build the two-line header if owners exist
+    if owners:
+        # First line: owner names, centered above their column groups
+        # Base indent: Facet(30) + Description(55) + Count(8) + In(15) = 108
+        indent = 135
+        owner_line = " " * indent
+        for owner in owners:
+            # Each owner gets 3 columns: Count (8), In (15), Out (15) = 38 chars
+            # Plus 8 spaces gap between groups
+            owner_line += f"{owner:^45}   "
+        print(owner_line)
+
+        # Second line: column labels
+        header = f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}"
+        for owner in owners:
+            header += " " * 8
+            header += f"{'Count':>8} {'In':>15} {'Out':>15}"
+        print(header)
+
+        line_len = 108 + (46 * len(owners))  # 108 base + 38 columns + 8 gap per owner
+        print("-" * line_len)
+    else:
+        header = f"{'Facet':<30} {'Description':<55} {'Count':>8} {'In':>15} {'Out':>15}"
+        print(header)
+        print("-" * 110)
 
     total_count = 0
     total_in = Decimal("0")
@@ -1077,17 +1350,15 @@ def print_facet_summary(result, facet_group_name, facet_definitions):
 
     for facet_code in sorted(facet_totals):
         meta = codes_metadata.get(facet_code, {})
-        # Skip facets marked for suppression
         if meta.get("suppress_in_report", False):
             continue
 
         totals = facet_totals[facet_code]
-        # Optionally skip zero transactions (optional but keeps output clean)
         if totals["count"] == 0 and totals["total_credit"] == 0 and totals["total_debit"] == 0:
             continue
 
         desc = meta.get("description", "")
-        print(
+        line = (
             f"{facet_code:<30} "
             f"{desc[:55]:<55} "
             f"{totals['count']:>8} "
@@ -1095,18 +1366,36 @@ def print_facet_summary(result, facet_group_name, facet_definitions):
             f"{totals['total_debit']:>15,.2f}"
         )
 
+        if owners:
+            for owner in owners:
+                count = totals["owner_counts"].get(owner, 0)
+                credit = totals["owner_credits"].get(owner, Decimal("0"))
+                debit = totals["owner_debits"].get(owner, Decimal("0"))
+                line += " " * 8
+                line += f"{count:>8} {credit:>15,.2f} {debit:>15,.2f}"
+
+        print(line)
+
         total_count += totals["count"]
         total_in += totals["total_credit"]
         total_out += totals["total_debit"]
 
-    print("-" * 110)
-    print(
+    print("-" * line_len)
+    line = (
         f"{'TOTAL':<30} "
         f"{'':<55} "
         f"{total_count:>8} "
         f"{total_in:>15,.2f} "
         f"{total_out:>15,.2f}"
     )
+    if owners:
+        for owner in owners:
+            owner_count = sum(facet_totals[f]["owner_counts"].get(owner, 0) for f in facet_totals)
+            owner_credit = sum(facet_totals[f]["owner_credits"].get(owner, Decimal("0")) for f in facet_totals)
+            owner_debit = sum(facet_totals[f]["owner_debits"].get(owner, Decimal("0")) for f in facet_totals)
+            line += " " * 8
+            line += f"{owner_count:>8} {owner_credit:>15,.2f} {owner_debit:>15,.2f}"
+    print(line)
 
     print()
     print(f"Net surplus (in - out): £{total_in - total_out:,.2f}")
@@ -1620,6 +1909,12 @@ def main():
             # Load control file once (shared across all years)
             control = load_control_file(control_file_path)
 
+            # Validate --ownership-report owner exists
+            if args.ownership_report and isinstance(args.ownership_report, str):
+                if args.ownership_report not in control.people:
+                    print_error(f"Owner '{args.ownership_report}' not found in control file", stats)
+                    return 1
+
             # Process each tax year
             for ty in tax_years:
                 print()
@@ -1672,10 +1967,10 @@ def main():
                     if not hasattr(control, 'facet_definitions'):
                         print_error("Facet definitions not loaded in control file.", stats)
                     else:
-                        print_facet_summary(analysis, args.facet_report, control.facet_definitions)
+                        print_facet_summary(analysis, args.facet_report, control.facet_definitions, control, args.ownership_report)
 
                 if args.analyse:
-                    print_analysis_report(analysis)
+                    print_analysis_report(analysis, control, args.ownership_report)
 
                 # 2f. Debug outputs
                 if args.display_facet:
@@ -1759,6 +2054,15 @@ def main():
             print_error("Description debug flags require --control-file", stats)
             return 1
 
+    # Check that --ownership-report implies --analyse and --control-file
+    if args.ownership_report:
+        if not args.analyse:
+            print_error("--ownership-report requires --analyse", stats)
+            return 1
+        if not args.control_file and not args.data_file:
+            print_error("--ownership-report requires --control-file", stats)
+            return 1
+
     try:
         # Load the single statement
         transactions = load_statement_by_type("bank-lloyds", args.statement, args.verbose, stats)
@@ -1779,15 +2083,22 @@ def main():
                 raise RuntimeError("--analyse requires --control-file")
 
             control = load_control_file(args.control_file)
+
+            # Validate --ownership-report owner exists
+            if args.ownership_report and isinstance(args.ownership_report, str):
+                if args.ownership_report not in control.people:
+                    print_error(f"Owner '{args.ownership_report}' not found in control file", stats)
+                    return 1
+
             analysis = analyse_transactions(transactions, control)
 
             if args.facet_report:
                 if not hasattr(control, 'facet_definitions'):
                     print_error("Facet definitions not loaded in control file.", stats)
                 else:
-                    print_facet_summary(analysis, args.facet_report, control.facet_definitions)
+                    print_facet_summary(analysis, args.facet_report, control.facet_definitions, control, args.ownership_report)
 
-            print_analysis_report(analysis)
+            print_analysis_report(analysis, control, args.ownership_report)
 
         if args.print_report:
             print_report(monthly, total_in, total_out, opening_balance, closing_balance)
