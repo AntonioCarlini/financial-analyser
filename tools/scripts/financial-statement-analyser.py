@@ -230,15 +230,11 @@ class Rule:
 @dataclass
 class ControlFile:
     people: dict[str, Person]
-
     categories: dict[str, Category]
-
-    rules: list[Rule]
-
     default_category: str
-
     default_ownership: dict[str, int]
     facet_definitions: dict = field(default_factory=dict)
+    statement_handling: dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class CategorySummary:
@@ -262,6 +258,7 @@ class AnalysisResult:
     warnings: list[str]
     category_transactions: dict[str, list[tuple[Transaction, str | None]]] = field(default_factory=dict)
     facet_assignments: dict[Transaction, list[str]] = field(default_factory=dict)
+    tx_ownership: dict[Transaction, dict[str, int]] = field(default_factory=dict)
 
 # ------------------------------------------------------------
 # Condition checkers for "when" clauses
@@ -574,6 +571,16 @@ def load_control_file(filename):
             "codes": codes_dict,
         }
 
+    # Load statement handling mapping
+    statement_handling = {}
+    for item in raw.get("statement_handling", []):
+        stmt_type = item.get("type")
+        rules_file = item.get("rules_file")
+        if stmt_type and rules_file:
+            base_dir = os.path.dirname(filename)
+            rules_file_path = os.path.join(base_dir, rules_file)
+            statement_handling[stmt_type] = rules_file_path
+
     rules = []
 
     for rule_data in raw.get("rules", []):
@@ -615,10 +622,10 @@ def load_control_file(filename):
     return ControlFile(
         people=people,
         categories=categories,
-        rules=rules,
         default_category=raw["defaults"]["category"],
         default_ownership=raw["defaults"]["ownership"],
         facet_definitions=facet_definitions,
+        statement_handling=statement_handling,
     )
 
 def resolve_ownership(tx, matched_rule, control):
@@ -678,23 +685,14 @@ def match_rule(tx, rule):
     # No 'when' clause, or it matched
     return True
 
-def analyse_transactions(
-    transactions,
-    control,
-):
-
+def analyse_transactions(transactions, control, rules):
     summaries = {}
+    tx_ownership = {}
 
     for category_id in control.categories:
-
-        summaries[category_id] = (
-            CategorySummary(
-                category=category_id
-            )
-        )
+        summaries[category_id] = (CategorySummary(category=category_id))
 
     uncategorised = []
-
     warnings = []
 
     category_transactions = {cat_id: [] for cat_id in control.categories}
@@ -702,31 +700,17 @@ def analyse_transactions(
     facet_assignments = {}
 
     for tx in transactions:
-
         matched_rule = None
-
-        for rule in control.rules:
-
-            if match_rule(
-                tx,
-                rule,
-            ):
+        for rule in rules:
+            if match_rule(tx, rule):
                 matched_rule = rule
                 break
 
         if matched_rule is None:
-
-            category_id = (
-                control.default_category
-            )
-
+            category_id = (control.default_category)
             uncategorised.append(tx)
-
         else:
-
-            category_id = (
-                matched_rule.category
-            )
+            category_id = (matched_rule.category)
 
             if (
                 matched_rule.transaction_types
@@ -742,11 +726,7 @@ def analyse_transactions(
                     f"{tx.transaction_type}"
                 )
 
-            if (
-                matched_rule.direction
-                ==
-                "credit"
-            ):
+            if (matched_rule.direction == "credit"):
                 if tx.credit == 0:
                     warnings.append(
                         f"line {tx.line_number}: "
@@ -754,11 +734,7 @@ def analyse_transactions(
                         f"expected credit"
                     )
 
-            if (
-                matched_rule.direction
-                ==
-                "debit"
-            ):
+            if (matched_rule.direction == "debit"):
                 if tx.debit == 0:
                     warnings.append(
                         f"line {tx.line_number}: "
@@ -803,13 +779,60 @@ def analyse_transactions(
             summary.owner_credits[owner] = summary.owner_credits.get(owner, Decimal("0")) + owner_credit
             summary.owner_debits[owner] = summary.owner_debits.get(owner, Decimal("0")) + owner_debit
 
+        # Store ownership for this transaction
+        tx_ownership[tx] = ownership
+
     return AnalysisResult(
         summaries=summaries,
         uncategorised=uncategorised,
         warnings=warnings,
         category_transactions=category_transactions,
         facet_assignments=facet_assignments,
+        tx_ownership=tx_ownership,
     )
+
+def merge_analysis_results(base, other):
+    """Merge two AnalysisResult objects, combining summaries and lists."""
+    if base is None:
+        return other
+
+    # Merge summaries
+    for cat_id, other_summary in other.summaries.items():
+        if cat_id in base.summaries:
+            base_summary = base.summaries[cat_id]
+            base_summary.transaction_count += other_summary.transaction_count
+            base_summary.total_credit += other_summary.total_credit
+            base_summary.total_debit += other_summary.total_debit
+            # Merge owner dicts
+            for owner, count in other_summary.owner_counts.items():
+                base_summary.owner_counts[owner] = base_summary.owner_counts.get(owner, 0) + count
+            for owner, credit in other_summary.owner_credits.items():
+                base_summary.owner_credits[owner] = base_summary.owner_credits.get(owner, Decimal("0")) + credit
+            for owner, debit in other_summary.owner_debits.items():
+                base_summary.owner_debits[owner] = base_summary.owner_debits.get(owner, Decimal("0")) + debit
+        else:
+            base.summaries[cat_id] = other_summary
+
+    # Merge uncategorised
+    base.uncategorised.extend(other.uncategorised)
+
+    # Merge warnings
+    base.warnings.extend(other.warnings)
+
+    # Merge category_transactions
+    for cat_id, entries in other.category_transactions.items():
+        if cat_id in base.category_transactions:
+            base.category_transactions[cat_id].extend(entries)
+        else:
+            base.category_transactions[cat_id] = entries
+
+    # Merge facet_assignments
+    base.facet_assignments.update(other.facet_assignments)
+
+    # Merge tx_ownership
+    base.tx_ownership.update(other.tx_ownership)
+
+    return base
 
 def print_analysis_report(result, control, ownership_report=None):
     """
@@ -1274,18 +1297,10 @@ def print_facet_summary(result, facet_group_name, facet_definitions, control, ow
         elif isinstance(ownership_report, str):
             owners = [ownership_report]
 
-    # Re-process transactions with ownership (using category_transactions)
+    # Re-process transactions with ownership using stored tx_ownership
     for cat_id, entries in result.category_transactions.items():
         for tx, rule_id in entries:
-            # Get ownership for this transaction
-            ownership = control.default_ownership
-            matched_rule = None
-            for rule in control.rules:
-                if match_rule(tx, rule):
-                    matched_rule = rule
-                    break
-            if matched_rule and matched_rule.ownership:
-                ownership = matched_rule.ownership
+            ownership = result.tx_ownership.get(tx, control.default_ownership)
 
             for facet in result.facet_assignments.get(tx, []):
                 if facet in facet_totals:
@@ -1466,6 +1481,60 @@ def validate_transaction_types(
         verbose,
         stats,
     )
+
+_rules_cache = {}
+
+def load_rules_file(filename):
+    """Load a rules file (YAML with a 'rules' list) and return the list of Rule objects."""
+    if filename in _rules_cache:
+        return _rules_cache[filename]
+
+    with open(filename, 'r', encoding='utf-8') as f:
+        raw = yaml.safe_load(f)
+
+    rules_data = raw.get("rules", [])
+    if not isinstance(rules_data, list):
+        raise ValueError(f"rules file {filename} must contain a 'rules' list")
+
+    rules = []
+    for rule_data in rules_data:
+        match_data = rule_data["match"]
+        conditions = []
+
+        if isinstance(match_data, list):
+            for cond in match_data:
+                for match_type, match_value in cond.items():
+                    conditions.append(MatchCondition(type=match_type, value=match_value.upper()))
+        elif isinstance(match_data, dict):
+            for match_type, match_value in match_data.items():
+                conditions.append(MatchCondition(type=match_type, value=match_value.upper()))
+        else:
+            conditions.append(MatchCondition(type="description", value=match_data.upper()))
+
+        rules.append(
+            Rule(
+                id=rule_data["id"],
+                priority=rule_data.get("priority", 0),
+                conditions=conditions,
+                category=rule_data["classify"]["category"],
+                ownership=rule_data.get("ownership", {}),
+                transaction_types=set(rule_data.get("expect", {}).get("transaction_types", [])) or None,
+                direction=rule_data.get("expect", {}).get("direction"),
+                when=rule_data.get("when"),
+                facets=rule_data.get("classify", {}).get("facets"),
+            )
+        )
+
+    rules.sort(key=lambda rule: rule.priority, reverse=True)
+    _rules_cache[filename] = rules
+    return rules
+
+def get_rules_for_type(statement_type, control):
+    """Look up and load the rules for a given statement type."""
+    if statement_type not in control.statement_handling:
+        raise ValueError(f"No rules file defined for statement type '{statement_type}'")
+    rules_file = control.statement_handling[statement_type]
+    return load_rules_file(rules_file)
 
 def load_statement_lloyds(filename, verbose, stats):
     transactions = []
@@ -1921,33 +1990,54 @@ def main():
                 print(f"Processing tax year: {ty['year']}")
                 print("-" * 50)
 
-                # 2a. Load all statements for this year
-                all_transactions = []
+                # 2a. Process each statement individually with its own rules
+                cumulative_analysis = None
+
                 for stmt in ty.get('statements', []):
                     stmt_type = stmt['type']
                     stmt_file = stmt['file']
+
                     try:
+                        # Load the statement
                         transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
-                        all_transactions.extend(transactions)
+                        if not transactions:
+                            print_warning(f"No transactions loaded from {stmt_file}", stats)
+                            continue
+
+                        # Get rules for this statement type
+                        try:
+                            rules = get_rules_for_type(stmt_type, control)
+                        except ValueError as e:
+                            print_error(str(e), stats)
+                            continue
+
+                        # Analyse this statement
+                        analysis = analyse_transactions(transactions, control, rules)
+
+                        # Merge into cumulative result
+                        cumulative_analysis = merge_analysis_results(cumulative_analysis, analysis)
+
                     except NotImplementedError as e:
                         print_error(str(e), stats)
-                        # Continue to next statement rather than aborting
+                        continue
+                    except Exception as e:
+                        print_error(f"Error processing {stmt_file}: {e}", stats)
                         continue
 
-                if not all_transactions:
-                    print_warning(f"No transactions loaded for {ty['year']}. Skipping.", stats)
+                if cumulative_analysis is None:
+                    print_warning(f"No transactions processed for {ty['year']}. Skipping.", stats)
                     continue
 
                 # 2b. Load extra info (placeholder – will raise NotImplementedError)
                 if extra_info_path:
                     try:
                         extra_info = load_extra_information(extra_info_path, ty['year'])
-                        # TODO: merge extra_info into the analysis
+                        # TODO: merge extra_info into cumulative_analysis
                     except NotImplementedError as e:
                         print_warning(str(e), stats)
 
-                # 2c. Run analysis on combined transactions
-                analysis = analyse_transactions(all_transactions, control)
+                # Use cumulative_analysis from here on
+                analysis = cumulative_analysis
 
                 # 2d. Validate compulsory facets (IHT_)
                 required_prefixes = ["IHT_"]
@@ -2090,7 +2180,14 @@ def main():
                     print_error(f"Owner '{args.ownership_report}' not found in control file", stats)
                     return 1
 
-            analysis = analyse_transactions(transactions, control)
+            # Get rules for the statement type (assume "bank-lloyds" for single statement)
+            try:
+                rules = get_rules_for_type("bank-lloyds", control)
+            except ValueError as e:
+                print_error(str(e), stats)
+                return 1
+
+            analysis = analyse_transactions(transactions, control, rules)
 
             if args.facet_report:
                 if not hasattr(control, 'facet_definitions'):
