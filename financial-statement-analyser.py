@@ -186,6 +186,8 @@ from financial_statement_analyser.core.control import (
 
 from financial_statement_analyser.loaders import load_statement_by_type
 
+from financial_statement_analyser.loaders.lloyds import validate_transaction_types
+
 ALLOWED_DAYS_GAP_AT_START = 9
 ALLOWED_DAYS_GAP_AT_END = 5
 
@@ -365,58 +367,6 @@ def list_data_file_info(tax_years, filter_years=None):
         for stmt in ty.get('statements', []):
             print(f"    - Type: {stmt['type']:15} File: {stmt['file']}")
         print()
-
-def validate_transaction_types(
-    transactions,
-    verbose,
-    stats,
-):
-    seen_types = set()
-
-    for tx in transactions:
-
-        tx_type = tx.transaction_type
-
-        seen_types.add(tx_type)
-
-        if tx_type not in TRANSACTION_RULES:
-            print_warning(
-                f"unknown transaction type "
-                f"'{tx_type}' "
-                f"on line {tx.line_number}",
-                stats,
-            )
-            continue
-
-        rules = TRANSACTION_RULES[tx_type]
-
-        if rules.get("credit_only"):
-
-            if tx.debit != 0:
-                print_warning(
-                    f"line {tx.line_number}: "
-                    f"{tx_type} expected money in "
-                    f"but debit amount is "
-                    f"£{tx.debit:,.2f}",
-                    stats,
-                )
-
-        if rules.get("debit_only"):
-
-            if tx.credit != 0:
-                print_warning(
-                    f"line {tx.line_number}: "
-                    f"{tx_type} expected money out "
-                    f"but credit amount is "
-                    f"£{tx.credit:,.2f}",
-                    stats,
-                )
-
-    print_pass(
-        f"{len(seen_types)} transaction types analysed",
-        verbose,
-        stats,
-    )
 
 def verify_reverse_chronological_order(transactions, verbose,  stats):
     previous = None

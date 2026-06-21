@@ -3,6 +3,8 @@ import csv
 from datetime import datetime
 from decimal import Decimal
 
+from financial_statement_analyser.core.utils import print_pass, print_warning
+
 from financial_statement_analyser.core.types import Transaction
 from financial_statement_analyser.core.utils import (
     print_pass,
@@ -140,3 +142,55 @@ def load_statement_lloyds(filename, verbose, stats):
         )
 
     return transactions
+
+def validate_transaction_types(
+    transactions,
+    verbose,
+    stats,
+):
+    seen_types = set()
+
+    for tx in transactions:
+
+        tx_type = tx.transaction_type
+
+        seen_types.add(tx_type)
+
+        if tx_type not in TRANSACTION_RULES:
+            print_warning(
+                f"unknown transaction type "
+                f"'{tx_type}' "
+                f"on line {tx.line_number}",
+                stats,
+            )
+            continue
+
+        rules = TRANSACTION_RULES[tx_type]
+
+        if rules.get("credit_only"):
+
+            if tx.debit != 0:
+                print_warning(
+                    f"line {tx.line_number}: "
+                    f"{tx_type} expected money in "
+                    f"but debit amount is "
+                    f"£{tx.debit:,.2f}",
+                    stats,
+                )
+
+        if rules.get("debit_only"):
+
+            if tx.credit != 0:
+                print_warning(
+                    f"line {tx.line_number}: "
+                    f"{tx_type} expected money out "
+                    f"but credit amount is "
+                    f"£{tx.credit:,.2f}",
+                    stats,
+                )
+
+    print_pass(
+        f"{len(seen_types)} transaction types analysed",
+        verbose,
+        stats,
+    )
