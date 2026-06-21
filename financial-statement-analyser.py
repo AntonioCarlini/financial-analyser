@@ -157,6 +157,7 @@ from financial_statement_analyser.core.utils import (
     print_pass,
     print_warning,
     print_error,
+    print_accumulated_messages,
     parse_date,
     parse_tax_year,
     parse_decimal,
@@ -402,8 +403,11 @@ def main():
 
                 # 2b. Load extra info
                 if extra_info_path:
-                    extra_info = load_extra_information(extra_info_path, ty['year'])
-                    # TODO: merge extra_info into cumulative_analysis
+                    try:
+                        extra_info = load_extra_information(extra_info_path, ty['year'])
+                        # TODO: merge extra_info into cumulative_analysis
+                    except NotImplementedError as e:
+                        print_error(str(e), stats)
 
                 # Use cumulative_analysis from here on
                 analysis = cumulative_analysis
@@ -466,7 +470,9 @@ def main():
                 print(f"PASS checks : {stats.pass_count}")
             print(f"Warnings    : {stats.warning_count}")
             print(f"Errors      : {stats.error_count}")
-
+            if stats.error_count > 0 or stats.warning_count > 0:
+                print_accumulated_messages()
+        
             if has_facet_errors:
                 return 1
             return 0
@@ -601,13 +607,16 @@ def main():
 
         print()
         print("============================================================")
-        print("SUMMARY")
+        print("SUMMARY XYZ")
         print("============================================================")
         print()
         if args.verbose:
             print(f"PASS checks : {stats.pass_count}")
         print(f"Warnings    : {stats.warning_count}")
         print(f"Errors      : {stats.error_count}")
+
+        if stats.error_count > 0 or stats.warning_count > 0:
+            print_accumulated_messages()
 
         if has_facet_errors:
             return 1
