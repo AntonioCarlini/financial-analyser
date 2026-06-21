@@ -273,10 +273,15 @@ def parse_arguments():
 
     parser.add_argument(
         "--statement",
-        ## TODO required=True,
         help="CSV bank statement"
     )
 
+    parser.add_argument(
+        "--statement-type",
+        default="bank-lloyds",
+        help="Statement type for --statement (default: bank-lloyds)"
+    )
+    
     parser.add_argument(
         "--tax-year",
         action="append",
@@ -317,278 +322,212 @@ def main():
     has_facet_errors = False
 
     # ------------------------------------------------------------------
-    # 1. Mutual exclusion: --data-file and --statement
+    # 1. Determine control file path and load data file (if any)
     # ------------------------------------------------------------------
-    if args.data_file and args.statement:
-        print_error("--data-file and --statement are mutually exclusive.", stats)
-        return 1
+    control_file_path = None
+    extra_info_path = None
+    data_tax_years = []
+    data_statement_paths = set()
 
-    # ------------------------------------------------------------------
-    # 2. DATA-FILE MODE
-    # ------------------------------------------------------------------
     if args.data_file:
         if not os.path.isfile(args.data_file):
             print_error(f"data file not found: {args.data_file}", stats)
             return 1
 
         try:
-            control_file_path, tax_years, extra_info_path = load_data_file(args.data_file)
-            if not os.path.isfile(control_file_path):
-                print_error(f"control file not found: {control_file_path}", stats)
-                return 1
-
-            # Optional: list the data file contents in verbose mode
-            if args.verbose:
-                list_data_file_info(tax_years, args.tax_year)
-
-            # Filter tax years if --tax-year was given
-            if args.tax_year:
-                tax_years = [ty for ty in tax_years if ty['year'] in args.tax_year]
-                if not tax_years:
-                    print_error("No tax years match the filter.", stats)
-                    return 1
-
-            # Load control file once (shared across all years)
-            control = load_control_file(control_file_path)
-
-            # Validate --ownership-report owner exists
-            if args.ownership_report and isinstance(args.ownership_report, str):
-                if args.ownership_report not in control.people:
-                    print_error(f"Owner '{args.ownership_report}' not found in control file", stats)
-                    return 1
-
-            # Process each tax year
-            for ty in tax_years:
-                print()
-                print(f"Processing tax year: {ty['year']}")
-                print("-" * 50)
-
-                # 2a. Process each statement individually with its own rules
-                cumulative_analysis = None
-
-                for stmt in ty.get('statements', []):
-                    stmt_type = stmt['type']
-                    stmt_file = stmt['file']
-
-                    try:
-                        # Load the statement
-                        transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
-                        if not transactions:
-                            print_warning(f"No transactions loaded from {stmt_file}", stats)
-                            continue
-
-                        # Get rules for this statement type
-                        try:
-                            rules = get_rules_for_type(stmt_type, control)
-                        except ValueError as e:
-                            print_error(str(e), stats)
-                            continue
-
-                        # Analyse this statement
-                        analysis = analyse_transactions(transactions, control, rules)
-
-                        # Merge into cumulative result
-                        cumulative_analysis = merge_analysis_results(cumulative_analysis, analysis)
-
-                    except NotImplementedError as e:
-                        print_error(str(e), stats)
-                        continue
-                    except Exception as e:
-                        print_error(f"Error processing {stmt_file}: {e}", stats)
-                        continue
-
-                if cumulative_analysis is None:
-                    print_warning(f"No transactions processed for {ty['year']}. Skipping.", stats)
-                    continue
-
-                # 2b. Load extra info
-                if extra_info_path:
-                    try:
-                        extra_info = load_extra_information(extra_info_path, ty['year'])
-                        # TODO: merge extra_info into cumulative_analysis
-                    except NotImplementedError as e:
-                        print_error(str(e), stats)
-
-                # Use cumulative_analysis from here on
-                analysis = cumulative_analysis
-
-                # 2d. Validate compulsory facets (IHT_)
-                required_prefixes = ["IHT_"]
-                facet_errors = validate_compulsory_facets(analysis, required_prefixes)
-                if facet_errors:
-                    print()
-                    print("============================================================")
-                    print(f"COMPULSORY FACET VALIDATION ERRORS – {ty['year']}")
-                    print("============================================================")
-                    for err in facet_errors:
-                        print(f"ERROR: {err}")
-                    print()
-                    has_facet_errors = True
-
-                # 2e. Print reports (mirroring the single‑statement flow)
-                if args.facet_report:
-                    if not hasattr(control, 'facet_definitions'):
-                        print_error("Facet definitions not loaded in control file.", stats)
-                    else:
-                        print_facet_summary(analysis, args.facet_report, control.facet_definitions, control, args.ownership_report)
-
-                if args.analyse:
-                    print_analysis_report(analysis, control, args.ownership_report)
-
-                # 2f. Debug outputs
-                if args.display_facet:
-                    print_facet_debug(analysis, args.display_facet)
-
-                if args.display_category:
-                    print_category_debug(analysis, args.display_category)
-
-                if (args.display_description_contains or
-                    args.display_description_prefix or
-                    args.display_description_suffix):
-                    print_description_debug(
-                        analysis,
-                        args.display_description_contains,
-                        args.display_description_prefix,
-                        args.display_description_suffix,
-                    )
-
-                # 2g. Monthly summary (without ledger reconciliation)
-                if args.print_report:
-                    monthly, total_in, total_out = calculate_monthly_totals(all_transactions)
-                    print_monthly_summary(monthly, total_in, total_out)
-
-                # Optional: print a separator between years
-                print()
-
-            # After processing all years, print a final summary
-            print()
-            print("============================================================")
-            print("SUMMARY")
-            print("============================================================")
-            print()
-            if args.verbose:
-                print(f"PASS checks : {stats.pass_count}")
-            print(f"Warnings    : {stats.warning_count}")
-            print(f"Errors      : {stats.error_count}")
-            if stats.error_count > 0 or stats.warning_count > 0:
-                print_accumulated_messages()
-        
-            if has_facet_errors:
-                return 1
-            return 0
-
-        except Exception as exc:
-            print_error(f"Failed to process data file: {exc}", stats)
+            control_file_path, data_tax_years, extra_info_path = load_data_file(args.data_file)
+        except Exception as e:
+            print_error(f"Failed to load data file: {e}", stats)
             return 1
 
-    # ------------------------------------------------------------------
-    # 3. SINGLE‑STATEMENT MODE
-    # ------------------------------------------------------------------
-    if not args.statement:
-        print_error("Either --statement or --data-file must be provided", stats)
-        return 1
+        # Build set of absolute statement paths from data file
+        for ty in data_tax_years:
+            for stmt in ty.get('statements', []):
+                data_statement_paths.add(os.path.abspath(stmt['file']))
 
-    if not os.path.isfile(args.statement):
-        print_error(f"statement file not found: {args.statement}", stats)
-        return 1
-
+    # ------------------------------------------------------------------
+    # 2. Determine control file (CLI overrides data file)
+    # ------------------------------------------------------------------
     if args.control_file:
-        if not os.path.isfile(args.control_file):
-            print_error(f"control file not found: {args.control_file}", stats)
-            return 1
-        if not os.access(args.control_file, os.R_OK):
-            print_error(f"control file not readable: {args.control_file}", stats)
-            return 1
+        control_file_path = args.control_file
 
-    # Check that debug flags imply --analyse and --control-file
-    if args.display_category:
-        if not args.analyse:
-            print_error("--display-category requires --analyse", stats)
-            return 1
-        if not args.control_file:
-            print_error("--display-category requires --control-file", stats)
-            return 1
+    if not control_file_path:
+        print_error("No control file specified (use --control-file or provide one in data file)", stats)
+        return 1
 
-    if (args.display_description_contains or
-        args.display_description_prefix or
-        args.display_description_suffix):
-        if not args.analyse:
-            print_error("Description debug flags require --analyse", stats)
-            return 1
-        if not args.control_file:
-            print_error("Description debug flags require --control-file", stats)
+    if not os.path.isfile(control_file_path):
+        print_error(f"control file not found: {control_file_path}", stats)
+        return 1
+    if not os.access(control_file_path, os.R_OK):
+        print_error(f"control file not readable: {control_file_path}", stats)
+        return 1
+
+    # ------------------------------------------------------------------
+    # 3. Load control file (once)
+    # ------------------------------------------------------------------
+    control = load_control_file(control_file_path)
+
+    # Validate --ownership-report owner exists
+    if args.ownership_report and isinstance(args.ownership_report, str):
+        if args.ownership_report not in control.people:
+            print_error(f"Owner '{args.ownership_report}' not found in control file", stats)
             return 1
 
-    # Check that --ownership-report implies --analyse and --control-file
-    if args.ownership_report:
-        if not args.analyse:
-            print_error("--ownership-report requires --analyse", stats)
-            return 1
-        if not args.control_file and not args.data_file:
-            print_error("--ownership-report requires --control-file", stats)
-            return 1
+    # ------------------------------------------------------------------
+    # 4. Build combined tax years list
+    # ------------------------------------------------------------------
+    tax_years = list(data_tax_years)  # copy
 
-    try:
-        # Load the single statement
-        transactions = load_statement_by_type("bank-lloyds", args.statement, args.verbose, stats)
+    if args.statement:
+        stmt_file = os.path.abspath(args.statement)
+        stmt_type = args.statement_type
 
-        if not transactions:
-            raise RuntimeError("statement contains no transactions")
-
-        print_pass(f"{len(transactions)} transactions loaded", args.verbose, stats)
-
-        validate_transaction_types(transactions, args.verbose, stats)
-        verify_reverse_chronological_order(transactions, args.verbose, stats)
-        verify_tax_year(transactions, args.verbose, stats)
-        opening_balance, closing_balance = verify_balances(transactions, args.verbose, stats)
-        monthly, total_in, total_out = calculate_monthly_totals(transactions)
-
-        if args.analyse:
-            if not args.control_file:
-                raise RuntimeError("--analyse requires --control-file")
-
-            control = load_control_file(args.control_file)
-
-            # Validate --ownership-report owner exists
-            if args.ownership_report and isinstance(args.ownership_report, str):
-                if args.ownership_report not in control.people:
-                    print_error(f"Owner '{args.ownership_report}' not found in control file", stats)
+        # Check if this statement is already in the data file
+        if stmt_file in data_statement_paths:
+            # It will be processed as part of the data file; do nothing
+            print(f"Note: --statement file is already in data file; will be processed normally.")
+        else:
+            # Load the statement to determine its tax year
+            try:
+                # Load the statement
+                temp_transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
+                if not temp_transactions:
+                    print_error(f"Statement file contains no transactions: {stmt_file}", stats)
                     return 1
 
-            # Get rules for the statement type (assume "bank-lloyds" for single statement)
-            try:
-                rules = get_rules_for_type("bank-lloyds", control)
-            except ValueError as e:
+                # Get tax year
+                year_str = verify_tax_year(temp_transactions, args.verbose, stats)
+                if not year_str:
+                    print_error(f"Could not determine tax year for {stmt_file}", stats)
+                    return 1
+
+                # Add as a forced tax year (not subject to --tax-year filter)
+                # Check if this year already exists in tax_years
+                existing_year = None
+                for ty in tax_years:
+                    if ty['year'] == year_str:
+                        existing_year = ty
+                        break
+
+                if existing_year:
+                    # Add this statement to the existing year's statements
+                    existing_year['statements'].append({
+                        'type': stmt_type,
+                        'file': stmt_file,
+                    })
+                else:
+                    # Create a new tax year with forced=True
+                    tax_years.append({
+                        'year': year_str,
+                        'statements': [{'type': stmt_type, 'file': stmt_file}],
+                        'forced': True,   # marker to bypass --tax-year filter
+                    })
+
+            except NotImplementedError as e:
                 print_error(str(e), stats)
                 return 1
+            except Exception as e:
+                print_error(f"Failed to process --statement: {e}", stats)
+                return 1
 
-            analysis = analyse_transactions(transactions, control, rules)
+    # ------------------------------------------------------------------
+    # 5. Apply --tax-year filter
+    # ------------------------------------------------------------------
+    if args.tax_year:
+        filtered = []
+        for ty in tax_years:
+            if ty['year'] in args.tax_year or ty.get('forced', False):
+                filtered.append(ty)
+        tax_years = filtered
+    else:
+        # Remove any 'forced' marker (not needed after filtering)
+        for ty in tax_years:
+            ty.pop('forced', None)
 
-            if args.facet_report:
-                if not hasattr(control, 'facet_definitions'):
-                    print_error("Facet definitions not loaded in control file.", stats)
-                else:
-                    print_facet_summary(analysis, args.facet_report, control.facet_definitions, control, args.ownership_report)
+    if not tax_years:
+        print_error("No tax years to process (check --tax-year filter)", stats)
+        return 1
 
-            print_analysis_report(analysis, control, args.ownership_report)
+    # ------------------------------------------------------------------
+    # 6. Process all tax years
+    # ------------------------------------------------------------------
+    all_transactions_by_year = {}  # For --print-report
 
-        if args.print_report:
-            print_report(monthly, total_in, total_out, opening_balance, closing_balance)
+    for ty in tax_years:
+        print()
+        print(f"Processing tax year: {ty['year']}")
+        print("-" * 50)
+
+        cumulative_analysis = None
+        year_transactions = []
+
+        for stmt in ty.get('statements', []):
+            stmt_type = stmt['type']
+            stmt_file = stmt['file']
+
+            try:
+                transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
+                if not transactions:
+                    print_warning(f"No transactions loaded from {stmt_file}", stats)
+                    continue
+                year_transactions.extend(transactions)
+
+                # Get rules for this statement type
+                try:
+                    rules = get_rules_for_type(stmt_type, control)
+                except ValueError as e:
+                    print_error(str(e), stats)
+                    continue
+
+                analysis = analyse_transactions(transactions, control, rules)
+                cumulative_analysis = merge_analysis_results(cumulative_analysis, analysis)
+
+            except NotImplementedError as e:
+                print_error(str(e), stats)
+                continue
+            except Exception as e:
+                print_error(f"Error processing {stmt_file}: {e}", stats)
+                continue
+
+        if cumulative_analysis is None:
+            print_warning(f"No transactions processed for {ty['year']}. Skipping.", stats)
+            continue
+
+        # Load extra info (only if data file was provided and we have extra_info_path)
+        if extra_info_path:
+            try:
+                extra_info = load_extra_information(extra_info_path, ty['year'])
+                # TODO: merge extra_info into cumulative_analysis
+            except NotImplementedError as e:
+                print_error(str(e), stats)
+
+        analysis = cumulative_analysis
+        all_transactions_by_year[ty['year']] = year_transactions
+
+        # Validate compulsory facets
+        required_prefixes = ["IHT_"]
+        facet_errors = validate_compulsory_facets(analysis, required_prefixes)
+        if facet_errors:
+            print()
+            print("============================================================")
+            print(f"COMPULSORY FACET VALIDATION ERRORS – {ty['year']}")
+            print("============================================================")
+            for err in facet_errors:
+                print(f"ERROR: {err}")
+            print()
+            has_facet_errors = True
+
+        # Print reports
+        if args.facet_report:
+            if not hasattr(control, 'facet_definitions'):
+                print_error("Facet definitions not loaded in control file.", stats)
+            else:
+                print_facet_summary(analysis, args.facet_report, control.facet_definitions, control, args.ownership_report)
 
         if args.analyse:
-            # Validate compulsory facets (IHT_)
-            required_prefixes = ["IHT_"]
-            facet_errors = validate_compulsory_facets(analysis, required_prefixes)
-            if facet_errors:
-                print()
-                print("============================================================")
-                print("COMPULSORY FACET VALIDATION ERRORS")
-                print("============================================================")
-                for err in facet_errors:
-                    print(f"ERROR: {err}")
-                print()
-                has_facet_errors = True
+            print_analysis_report(analysis, control, args.ownership_report)
 
+        # Debug outputs
         if args.display_facet:
             print_facet_debug(analysis, args.display_facet)
 
@@ -605,26 +544,32 @@ def main():
                 args.display_description_suffix,
             )
 
-        print()
-        print("============================================================")
-        print("SUMMARY XYZ")
-        print("============================================================")
-        print()
-        if args.verbose:
-            print(f"PASS checks : {stats.pass_count}")
-        print(f"Warnings    : {stats.warning_count}")
-        print(f"Errors      : {stats.error_count}")
+        # Monthly summary (without reconciliation)
+        if args.print_report and year_transactions:
+            monthly, total_in, total_out = calculate_monthly_totals(year_transactions)
+            print_monthly_summary(monthly, total_in, total_out)
 
-        if stats.error_count > 0 or stats.warning_count > 0:
-            print_accumulated_messages()
+        print()  # separator
 
-        if has_facet_errors:
-            return 1
-        return 0
+    # ------------------------------------------------------------------
+    # 7. Final summary
+    # ------------------------------------------------------------------
+    print()
+    print("============================================================")
+    print("SUMMARY")
+    print("============================================================")
+    print()
+    if args.verbose:
+        print(f"PASS checks : {stats.pass_count}")
+    print(f"Warnings    : {stats.warning_count}")
+    print(f"Errors      : {stats.error_count}")
 
-    except Exception as exc:
-        print_error(str(exc), stats)
+    if stats.error_count > 0 or stats.warning_count > 0:
+        print_accumulated_messages()
+
+    if has_facet_errors or stats.error_count > 0:
         return 1
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
