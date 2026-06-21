@@ -187,6 +187,7 @@ from financial_statement_analyser.core.control import (
 from financial_statement_analyser.loaders import load_statement_by_type
 from financial_statement_analyser.loaders.lloyds import validate_transaction_types
 from financial_statement_analyser.core.data import load_data_file, list_data_file_info
+from financial_statement_analyser.core.reports import print_report, print_monthly_summary
 
 from financial_statement_analyser.core.verification import (
     verify_reverse_chronological_order,
@@ -309,135 +310,6 @@ def load_extra_information(filename, tax_year):
         f"for tax year '{tax_year}'"
     )
 
-def print_report(
-    monthly,
-    total_in,
-    total_out,
-    opening_balance,
-    closing_balance,
-):
-
-    MONTH_WIDTH = 10
-    AMOUNT_WIDTH = 12
-    COLUMN_GAP = " " * 5
-
-    print()
-    print("============================================================")
-    print("MONTHLY SUMMARY")
-    print("============================================================")
-    print()
-
-    print(
-        f"{'Month':<{MONTH_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"{'Money In':>{AMOUNT_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"{'Money Out':>{AMOUNT_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"{'Net':>{AMOUNT_WIDTH}}"
-    )
-
-    print("-" * 60)
-
-    for month in sorted(monthly):
-
-        money_in = monthly[month]["money_in"]
-        money_out = monthly[month]["money_out"]
-        net = money_in - money_out
-
-        print(
-            f"{month:<{MONTH_WIDTH}}"
-            f"{COLUMN_GAP}"
-            f"£{money_in:>{AMOUNT_WIDTH-1},.2f}"
-            f"{COLUMN_GAP}"
-            f"£{money_out:>{AMOUNT_WIDTH-1},.2f}"
-            f"{COLUMN_GAP}"
-            f"£{net:>{AMOUNT_WIDTH-1},.2f}"
-        )
-
-    print("-" * 60)
-
-    net_total = total_in - total_out
-
-    print(
-        f"{'TOTAL':<{MONTH_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"£{total_in:>{AMOUNT_WIDTH-1},.2f}"
-        f"{COLUMN_GAP}"
-        f"£{total_out:>{AMOUNT_WIDTH-1},.2f}"
-        f"{COLUMN_GAP}"
-        f"£{net_total:>{AMOUNT_WIDTH-1},.2f}"
-    )
-
-    print()
-    print("============================================================")
-    print("LEDGER RECONCILIATION")
-    print("============================================================")
-    print()
-
-    print(f"Opening balance : £{opening_balance:,.2f}")
-    print(f"Closing balance : £{closing_balance:,.2f}")
-    print(f"Money in        : £{total_in:,.2f}")
-    print(f"Money out       : £{total_out:,.2f}")
-    print(f"Net movement    : £{net_total:,.2f}")
-
-    expected_change = closing_balance - opening_balance
-
-    if expected_change == net_total:
-        print("Reconciliation  : PASS")
-    else:
-        print("Reconciliation  : FAIL")
-
-def print_monthly_summary(monthly, total_in, total_out):
-    """Print just the monthly summary table (no reconciliation)."""
-    MONTH_WIDTH = 10
-    AMOUNT_WIDTH = 12
-    COLUMN_GAP = " " * 5
-
-    print()
-    print("============================================================")
-    print("MONTHLY SUMMARY")
-    print("============================================================")
-    print()
-
-    print(
-        f"{'Month':<{MONTH_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"{'Money In':>{AMOUNT_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"{'Money Out':>{AMOUNT_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"{'Net':>{AMOUNT_WIDTH}}"
-    )
-
-    print("-" * 60)
-
-    for month in sorted(monthly):
-        money_in = monthly[month]["money_in"]
-        money_out = monthly[month]["money_out"]
-        net = money_in - money_out
-        print(
-            f"{month:<{MONTH_WIDTH}}"
-            f"{COLUMN_GAP}"
-            f"£{money_in:>{AMOUNT_WIDTH-1},.2f}"
-            f"{COLUMN_GAP}"
-            f"£{money_out:>{AMOUNT_WIDTH-1},.2f}"
-            f"{COLUMN_GAP}"
-            f"£{net:>{AMOUNT_WIDTH-1},.2f}"
-        )
-
-    print("-" * 60)
-    net_total = total_in - total_out
-    print(
-        f"{'TOTAL':<{MONTH_WIDTH}}"
-        f"{COLUMN_GAP}"
-        f"£{total_in:>{AMOUNT_WIDTH-1},.2f}"
-        f"{COLUMN_GAP}"
-        f"£{total_out:>{AMOUNT_WIDTH-1},.2f}"
-        f"{COLUMN_GAP}"
-        f"£{net_total:>{AMOUNT_WIDTH-1},.2f}"
-    )
-
 def main():
     stats = AnalysisResults()
     args = parse_arguments()
@@ -528,13 +400,10 @@ def main():
                     print_warning(f"No transactions processed for {ty['year']}. Skipping.", stats)
                     continue
 
-                # 2b. Load extra info (placeholder – will raise NotImplementedError)
+                # 2b. Load extra info
                 if extra_info_path:
-                    try:
-                        extra_info = load_extra_information(extra_info_path, ty['year'])
-                        # TODO: merge extra_info into cumulative_analysis
-                    except NotImplementedError as e:
-                        print_warning(str(e), stats)
+                    extra_info = load_extra_information(extra_info_path, ty['year'])
+                    # TODO: merge extra_info into cumulative_analysis
 
                 # Use cumulative_analysis from here on
                 analysis = cumulative_analysis

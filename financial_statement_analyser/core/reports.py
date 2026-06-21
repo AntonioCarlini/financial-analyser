@@ -590,3 +590,125 @@ def print_facet_summary(result, facet_group_name, facet_definitions, control, ow
     print()
     print(f"Net surplus (in - out): £{total_in - total_out:,.2f}")
 
+def print_report( monthly, total_in, total_out, opening_balance, closing_balance):
+
+    MONTH_WIDTH = 10
+    AMOUNT_WIDTH = 12
+    COLUMN_GAP = " " * 5
+
+    print()
+    print("============================================================")
+    print("MONTHLY SUMMARY")
+    print("============================================================")
+    print()
+
+    print(
+        f"{'Month':<{MONTH_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Money In':>{AMOUNT_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Money Out':>{AMOUNT_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Net':>{AMOUNT_WIDTH}}"
+    )
+
+    print("-" * 60)
+
+    for month in sorted(monthly):
+
+        money_in = monthly[month]["money_in"]
+        money_out = monthly[month]["money_out"]
+        net = money_in - money_out
+
+        print(
+            f"{month:<{MONTH_WIDTH}}"
+            f"{COLUMN_GAP}"
+            f"£{money_in:>{AMOUNT_WIDTH-1},.2f}"
+            f"{COLUMN_GAP}"
+            f"£{money_out:>{AMOUNT_WIDTH-1},.2f}"
+            f"{COLUMN_GAP}"
+            f"£{net:>{AMOUNT_WIDTH-1},.2f}"
+        )
+
+    print("-" * 60)
+
+    net_total = total_in - total_out
+
+    print(
+        f"{'TOTAL':<{MONTH_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"£{total_in:>{AMOUNT_WIDTH-1},.2f}"
+        f"{COLUMN_GAP}"
+        f"£{total_out:>{AMOUNT_WIDTH-1},.2f}"
+        f"{COLUMN_GAP}"
+        f"£{net_total:>{AMOUNT_WIDTH-1},.2f}"
+    )
+
+    print()
+    print("============================================================")
+    print("LEDGER RECONCILIATION")
+    print("============================================================")
+    print()
+
+    print(f"Opening balance : £{opening_balance:,.2f}")
+    print(f"Closing balance : £{closing_balance:,.2f}")
+    print(f"Money in        : £{total_in:,.2f}")
+    print(f"Money out       : £{total_out:,.2f}")
+    print(f"Net movement    : £{net_total:,.2f}")
+
+    expected_change = closing_balance - opening_balance
+
+    if expected_change == net_total:
+        print("Reconciliation  : PASS")
+    else:
+        print("Reconciliation  : FAIL")
+
+def print_monthly_summary(monthly, total_in, total_out):
+    """Print just the monthly summary table (no reconciliation)."""
+    MONTH_WIDTH = 10
+    AMOUNT_WIDTH = 12
+    COLUMN_GAP = " " * 5
+
+    print()
+    print("============================================================")
+    print("MONTHLY SUMMARY")
+    print("============================================================")
+    print()
+
+    print(
+        f"{'Month':<{MONTH_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Money In':>{AMOUNT_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Money Out':>{AMOUNT_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"{'Net':>{AMOUNT_WIDTH}}"
+    )
+
+    print("-" * 60)
+
+    for month in sorted(monthly):
+        money_in = monthly[month]["money_in"]
+        money_out = monthly[month]["money_out"]
+        net = money_in - money_out
+        print(
+            f"{month:<{MONTH_WIDTH}}"
+            f"{COLUMN_GAP}"
+            f"£{money_in:>{AMOUNT_WIDTH-1},.2f}"
+            f"{COLUMN_GAP}"
+            f"£{money_out:>{AMOUNT_WIDTH-1},.2f}"
+            f"{COLUMN_GAP}"
+            f"£{net:>{AMOUNT_WIDTH-1},.2f}"
+        )
+
+    print("-" * 60)
+    net_total = total_in - total_out
+    print(
+        f"{'TOTAL':<{MONTH_WIDTH}}"
+        f"{COLUMN_GAP}"
+        f"£{total_in:>{AMOUNT_WIDTH-1},.2f}"
+        f"{COLUMN_GAP}"
+        f"£{total_out:>{AMOUNT_WIDTH-1},.2f}"
+        f"{COLUMN_GAP}"
+        f"£{net_total:>{AMOUNT_WIDTH-1},.2f}"
+    )
