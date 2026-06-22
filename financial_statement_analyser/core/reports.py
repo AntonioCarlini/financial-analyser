@@ -26,6 +26,8 @@ def print_analysis_report(result, control, ownership_report=None):
 
     # Determine which owners to show
     owners = []
+    line_len = 75   ## length if no owners ... adjusted otherwise
+
     if ownership_report:
         if ownership_report is True:
             # Show all owners defined in the control file
@@ -52,12 +54,12 @@ def print_analysis_report(result, control, ownership_report=None):
             header += f"{'Count':>8} {'In':>15} {'Out':>15}"
         print(header)
 
-        line_len = 68 + (46 * len(owners))  # 68 base + 38 columns + 8 gap per owner
+        line_len = 75 + (46 * len(owners))  # 68 base + 38 columns + 8 gap per owner
         print("-" * line_len)
     else:
         header = f"{'Category':30} {'Count':>8} {'In':>15} {'Out':>15}"
         print(header)
-        print("-" * 68)
+        print("-" * line_len)
 
     for category_id in sorted(result.summaries):
         summary = result.summaries[category_id]
@@ -73,6 +75,23 @@ def print_analysis_report(result, control, ownership_report=None):
                 line += f"{count:>8} {credit:>15,.2f} {debit:>15,.2f}"
 
         print(line)
+
+    # Print totals row
+    total_count = sum(s.transaction_count for s in result.summaries.values())
+    total_credit = sum(s.total_credit for s in result.summaries.values())
+    total_debit = sum(s.total_debit for s in result.summaries.values())
+
+    line = f"{'TOTAL':30} {total_count:>8} {total_credit:>15,.2f} {total_debit:>15,.2f}"
+    if owners:
+        for owner in owners:
+            owner_count = sum(s.owner_counts.get(owner, 0) for s in result.summaries.values())
+            owner_credit = sum(s.owner_credits.get(owner, Decimal("0")) for s in result.summaries.values())
+            owner_debit = sum(s.owner_debits.get(owner, Decimal("0")) for s in result.summaries.values())
+            line += " " * 8
+            line += f"{owner_count:>8} {owner_credit:>15,.2f} {owner_debit:>15,.2f}"
+
+    print("-" * line_len)
+    print(line)
 
     print()
 
