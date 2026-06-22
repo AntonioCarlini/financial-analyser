@@ -56,7 +56,7 @@ TRANSACTION_RULES = {
     "TFR": {},
 }
 
-def load_statement_lloyds(filename, verbose, stats):
+def load_statement_lloyds(filename, verbose, stats, control=None, statement_type=None):
     transactions = []
 
     expected_sort_code = None

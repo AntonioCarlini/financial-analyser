@@ -13,18 +13,15 @@ class AnalysisResults:
 @dataclass(frozen=True)
 class Transaction:
     line_number: int
-
     date: datetime
-
     transaction_type: str
     description: str
-
     debit: Decimal
     credit: Decimal
     balance: Decimal
-
     sort_code: str
     account_number: str
+    card_holder: str | None = None
 
 @dataclass
 class Person:
@@ -67,12 +64,9 @@ class ControlFile:
 @dataclass
 class CategorySummary:
     category: str
-
     transaction_count: int = 0
-
     total_credit: Decimal = Decimal("0")
     total_debit: Decimal = Decimal("0")
-
     # Per-owner breakdowns
     owner_counts: dict[str, int] = field(default_factory=dict)
     owner_credits: dict[str, Decimal] = field(default_factory=dict)

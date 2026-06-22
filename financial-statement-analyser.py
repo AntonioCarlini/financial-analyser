@@ -390,7 +390,7 @@ def main():
             # Load the statement to determine its tax year
             try:
                 # Load the statement
-                temp_transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
+                temp_transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats, control)
                 if not temp_transactions:
                     print_error(f"Statement file contains no transactions: {stmt_file}", stats)
                     return 1
@@ -466,7 +466,7 @@ def main():
             stmt_file = stmt['file']
 
             try:
-                transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats)
+                transactions = load_statement_by_type(stmt_type, stmt_file, args.verbose, stats, control)
                 if not transactions:
                     print_warning(f"No transactions loaded from {stmt_file}", stats)
                     continue

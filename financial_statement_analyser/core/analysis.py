@@ -106,9 +106,25 @@ def resolve_ownership(tx, matched_rule, control):
     """
     Determine the ownership split for a transaction.
     Returns a dict: {person_id: percentage}
+
+    Special case: if a rule has ownership: {card_holder: 100},
+    it resolves to 100% ownership by the transaction's card_holder.
     """
     if matched_rule and matched_rule.ownership:
-        return matched_rule.ownership
+        ownership = matched_rule.ownership
+        # Check for special card_holder key
+        if "card_holder" in ownership:
+            if tx.card_holder is None:
+                raise ValueError(f"Transaction on line {tx.line_number} has no card_holder, " f"but rule '{matched_rule.id}' uses card_holder ownership.")
+            # Replace with actual person ID
+            person_id = tx.card_holder
+            percentage = ownership["card_holder"]
+            if percentage != 100:
+                # Warn but use the given percentage
+                pass
+            return {person_id: percentage}
+        else:
+            return ownership
     return control.default_ownership
 
 def analyse_transactions(transactions, control, rules):

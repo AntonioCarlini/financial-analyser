@@ -51,7 +51,7 @@ def load_control_file(filename):
             "codes": codes_dict,
         }
 
-    # Load statement handling mapping
+    # Load statement handling mapping (rules file + optional cardholder mapping)
     statement_handling = {}
     for item in raw.get("statement_handling", []):
         stmt_type = item.get("type")
@@ -59,10 +59,13 @@ def load_control_file(filename):
         if stmt_type and rules_file:
             base_dir = os.path.dirname(filename)
             rules_file_path = os.path.join(base_dir, rules_file)
-            statement_handling[stmt_type] = rules_file_path
+            cardholder_mapping = item.get("cardholder_mapping", {})
+            statement_handling[stmt_type] = {
+                "rules_file": rules_file_path,
+                "cardholder_mapping": cardholder_mapping,
+            }
 
     rules = []
-
     for rule_data in raw.get("rules", []):
         match_data = rule_data["match"]
         conditions = []
@@ -157,6 +160,11 @@ def get_rules_for_type(statement_type, control):
     """Look up and load the rules for a given statement type."""
     if statement_type not in control.statement_handling:
         raise ValueError(f"No rules file defined for statement type '{statement_type}'")
-    rules_file = control.statement_handling[statement_type]
+    rules_file = control.statement_handling[statement_type]["rules_file"]
     return load_rules_file(rules_file)
 
+def get_cardholder_mapping(statement_type, control):
+    """Return the cardholder mapping dict for a statement type, or empty dict."""
+    if statement_type in control.statement_handling:
+        return control.statement_handling[statement_type].get("cardholder_mapping", {})
+    return {}
