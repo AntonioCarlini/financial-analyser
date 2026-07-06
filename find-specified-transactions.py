@@ -8,6 +8,8 @@ across one or more tax years, using the existing data.yaml and control.yaml.
 Reuses:
   - financial_statement_analyser.core.data.load_data_file
   - financial_statement_analyser.core.control.load_control_file
+  - financial_statement_analyser.core.control.get_rules_for_type
+  - financial_statement_analyser.core.analysis.match_rule
   - financial_statement_analyser.loaders.load_statement_by_type
 
 Output is tab-separated to stdout.
@@ -19,18 +21,33 @@ import sys
 from decimal import Decimal
 
 from financial_statement_analyser.core.data import load_data_file
-from financial_statement_analyser.core.control import load_control_file
+from financial_statement_analyser.core.control import load_control_file, get_rules_for_type
+from financial_statement_analyser.core.analysis import match_rule
 from financial_statement_analyser.core.types import AnalysisResults
 from financial_statement_analyser.core.utils import parse_decimal, print_error
 from financial_statement_analyser.loaders import load_statement_by_type
 
 
 def get_signed_amount(tx):
-    """
-    Return a signed Decimal amount from a Transaction object.
-    Credit is money in (positive), Debit is money out (negative).
-    """
+    """Return a signed Decimal: positive = credit (money in), negative = debit (money out)."""
     return tx.credit - tx.debit
+
+
+def get_category_for_transaction(tx, rules, control):
+    """
+    Determine the category for a transaction, using the same logic as
+    analyse_transactions(). Returns the category ID (string).
+    """
+    matched_rule = None
+    for rule in rules:
+        if match_rule(tx, rule):
+            matched_rule = rule
+            break
+
+    if matched_rule is None:
+        return control.default_category
+    else:
+        return matched_rule.category
 
 
 def parse_arguments():
@@ -65,6 +82,11 @@ def parse_arguments():
         help="Filter by transaction type. 'credit' means money in, 'debit' means money out."
     )
     parser.add_argument(
+        "--exclude",
+        help="Comma-separated list of category IDs to exclude (e.g., INCOME_SALARY,CAPITAL_EXPENSES,CREDIT_CARD). "
+             "Spaces around commas are allowed if the whole list is quoted."
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Show progress messages (which files are being read)."
@@ -74,6 +96,14 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
+
+    # Parse the exclude list (strip whitespace, handle empty)
+    excluded_categories = set()
+    if args.exclude:
+        for cat in args.exclude.split(','):
+            cat_stripped = cat.strip()
+            if cat_stripped:
+                excluded_categories.add(cat_stripped)
 
     stats = AnalysisResults()
 
@@ -132,7 +162,8 @@ def main():
         "Description",
         "Amount",
         "Balance",
-        "Type"
+        "Type",
+        "Category"
     ]))
 
     total_matches = 0
@@ -145,6 +176,13 @@ def main():
 
             if args.verbose:
                 print(f"Reading {stmt_file} ({stmt_type})...", file=sys.stderr)
+
+            # Load the rules for this statement type
+            try:
+                rules = get_rules_for_type(stmt_type, control)
+            except Exception as e:
+                print_error(f"Failed to get rules for {stmt_type}: {e}", stats)
+                continue
 
             try:
                 transactions = load_statement_by_type(
@@ -159,10 +197,17 @@ def main():
                 continue
 
             for tx in transactions:
+                # Determine the category for this transaction
+                category = get_category_for_transaction(tx, rules, control)
+
+                # Apply exclude filter
+                if category in excluded_categories:
+                    continue
+
                 signed_amount = get_signed_amount(tx)
                 abs_amount = abs(signed_amount)
 
-                # Apply amount filters (based on absolute value)
+                # Apply amount filters
                 if abs_amount < min_dec:
                     continue
                 if max_dec is not None and abs_amount > max_dec:
@@ -176,7 +221,7 @@ def main():
 
                 tx_type = "Credit" if signed_amount > 0 else "Debit" if signed_amount < 0 else "Zero"
 
-                # Clean description (remove tabs/newlines)
+                # Clean description
                 desc = tx.description.replace("\t", " ").replace("\n", " ")
 
                 # Print matching transaction
@@ -187,13 +232,14 @@ def main():
                     desc,
                     f"{signed_amount:.2f}",
                     f"{tx.balance:.2f}",
-                    tx_type
+                    tx_type,
+                    category
                 ]))
 
                 total_matches += 1
 
     if args.verbose:
-        print(f"Total matching transactions found: {total_matches}", file=sys.stderr)
+        print(f"Total matching transactions found (after exclusions): {total_matches}", file=sys.stderr)
 
     if stats.error_count > 0:
         return 1
@@ -202,4 +248,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
