@@ -5,6 +5,18 @@ find-specified-transactions.py
 Find transactions exceeding (or falling within) a given monetary threshold
 across one or more tax years, using the existing data.yaml and control.yaml.
 
+Filters:
+  --include-category   Only show transactions in these categories (OR logic)
+  --include-facet      Only show transactions with these facets (OR logic)
+  --exclude-category   Hide transactions in these categories (OR logic)
+  --exclude-facet      Hide transactions with these facets (OR logic)
+
+Precedence:
+  1. If any --include-* flags are given, the universe starts empty and
+     transactions are added if they match ANY included category OR facet.
+  2. If no --include-* flags are given, the universe is everything.
+  3. Exclusions are then applied as a final filter (regardless of includes).
+
 Output is human-readable aligned columns by default. Use --raw-tsv for piping.
 """
 
@@ -26,16 +38,61 @@ def get_signed_amount(tx):
     return tx.credit - tx.debit
 
 
-def get_category_for_transaction(tx, rules, control):
-    """Determine category using the same logic as analyse_transactions()."""
+def get_category_and_facets(tx, rules, control):
+    """
+    Determine the category and assigned facets for a transaction.
+    This assumes all categories referenced by rules have already been validated.
+    """
     matched_rule = None
     for rule in rules:
         if match_rule(tx, rule):
             matched_rule = rule
             break
+
     if matched_rule is None:
-        return control.default_category
-    return matched_rule.category
+        category = control.default_category
+    else:
+        category = matched_rule.category
+
+    # Resolve facets
+    if matched_rule and matched_rule.facets is not None:
+        facets = matched_rule.facets
+    else:
+        facets = control.categories[category].default_facets
+
+    return category, facets
+
+
+def validate_rules_for_type(stmt_type, rules, control):
+    """
+    Check that every category referenced by rules (and the default category)
+    actually exists in control.categories.
+    Returns a list of error strings (empty if valid).
+    """
+    errors = []
+    valid_categories = set(control.categories.keys())
+
+    # Check default category
+    if control.default_category not in valid_categories:
+        errors.append(
+            f"Default category '{control.default_category}' is not defined in control.yaml"
+        )
+
+    # Check every rule's category
+    for rule in rules:
+        if rule.category not in valid_categories:
+            errors.append(
+                f"Rule '{rule.id}' (type: {stmt_type}) references undefined category '{rule.category}'"
+            )
+
+    return errors
+
+
+def parse_comma_list(value):
+    """Split a comma-separated string, strip whitespace, ignore empty items."""
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(',') if item.strip()}
 
 
 def parse_arguments():
@@ -69,10 +126,25 @@ def parse_arguments():
         choices=["credit", "debit"],
         help="Filter by transaction type. 'credit' means money in, 'debit' means money out."
     )
+
+    # Include/exclude flags
     parser.add_argument(
-        "--exclude",
-        help="Comma-separated list of category IDs to exclude."
+        "--include-category",
+        help="Comma-separated list of category IDs to include (OR logic)."
     )
+    parser.add_argument(
+        "--include-facet",
+        help="Comma-separated list of facet codes to include (OR logic)."
+    )
+    parser.add_argument(
+        "--exclude-category",
+        help="Comma-separated list of category IDs to exclude (OR logic)."
+    )
+    parser.add_argument(
+        "--exclude-facet",
+        help="Comma-separated list of facet codes to exclude (OR logic)."
+    )
+
     parser.add_argument(
         "--raw-tsv",
         action="store_true",
@@ -89,12 +161,12 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    excluded_categories = set()
-    if args.exclude:
-        for cat in args.exclude.split(','):
-            cat_stripped = cat.strip()
-            if cat_stripped:
-                excluded_categories.add(cat_stripped)
+    include_categories = parse_comma_list(args.include_category)
+    include_facets = parse_comma_list(args.include_facet)
+    exclude_categories = parse_comma_list(args.exclude_category)
+    exclude_facets = parse_comma_list(args.exclude_facet)
+
+    has_includes = bool(include_categories or include_facets)
 
     stats = AnalysisResults()
 
@@ -126,7 +198,6 @@ def main():
         print_error(f"Failed to load data file: {e}", stats)
         return 1
 
-    # Filter tax years
     if args.tax_year:
         tax_years = [ty for ty in tax_years if ty['year'] in args.tax_year]
 
@@ -134,7 +205,6 @@ def main():
         print_error("No tax years to process (check --tax-year filter)", stats)
         return 1
 
-    # Load control file
     if not os.path.isfile(control_path):
         print_error(f"Control file not found: {control_path}", stats)
         return 1
@@ -145,9 +215,44 @@ def main():
         print_error(f"Failed to load control file: {e}", stats)
         return 1
 
-    # Collect rows here for pretty formatting
+    # ------------------------------------------------------------------
+    # PRE-FLIGHT VALIDATION: collect all rule/category errors
+    # ------------------------------------------------------------------
+    all_validation_errors = []
+    statement_types_seen = set()
+
+    for ty in tax_years:
+        for stmt in ty.get('statements', []):
+            stmt_type = stmt['type']
+            if stmt_type in statement_types_seen:
+                continue
+            statement_types_seen.add(stmt_type)
+
+            try:
+                rules = get_rules_for_type(stmt_type, control)
+            except Exception as e:
+                # This is a fatal error for this type
+                all_validation_errors.append(f"Failed to load rules for '{stmt_type}': {e}")
+                continue
+
+            errors = validate_rules_for_type(stmt_type, rules, control)
+            if errors:
+                all_validation_errors.extend(errors)
+
+    if all_validation_errors:
+        print("ERROR: Category validation failed - one or more rules reference undefined categories.", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        for err in all_validation_errors:
+            print(f"  - {err}", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        print("Please fix the control.yaml and re-run.", file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
+    # PROCESS TRANSACTIONS (validation passed)
+    # ------------------------------------------------------------------
     rows = []
-    headers = ["TaxYear", "StatementFile", "Date", "Description", "Amount", "Balance", "Type", "Category"]
+    headers = ["TaxYear", "StatementFile", "Date", "Description", "Amount", "Balance", "Type", "Category", "Facets"]
 
     for ty in tax_years:
         year_str = ty['year']
@@ -177,9 +282,19 @@ def main():
                 continue
 
             for tx in transactions:
-                category = get_category_for_transaction(tx, rules, control)
+                category, facets = get_category_and_facets(tx, rules, control)
 
-                if category in excluded_categories:
+                # Inclusion filter
+                if has_includes:
+                    in_cat = category in include_categories
+                    in_facet = any(f in include_facets for f in facets)
+                    if not (in_cat or in_facet):
+                        continue
+
+                # Exclusion filter
+                if category in exclude_categories:
+                    continue
+                if any(f in exclude_facets for f in facets):
                     continue
 
                 signed_amount = get_signed_amount(tx)
@@ -198,6 +313,8 @@ def main():
                 tx_type = "Credit" if signed_amount > 0 else "Debit" if signed_amount < 0 else "Zero"
                 desc = tx.description.replace("\t", " ").replace("\n", " ")
 
+                facets_str = ",".join(facets) if facets else ""
+
                 rows.append([
                     year_str,
                     os.path.basename(stmt_file),
@@ -206,44 +323,42 @@ def main():
                     f"{signed_amount:.2f}",
                     f"{tx.balance:.2f}",
                     tx_type,
-                    category
+                    category,
+                    facets_str
                 ])
 
     # ---- Output ----
     if args.raw_tsv:
-        # Raw tab-separated (for piping)
         print("\t".join(headers))
         for row in rows:
             print("\t".join(row))
     else:
-        # Human-readable aligned columns
         if not rows:
             print("No matching transactions found.")
             return 0
 
-        # Calculate column widths
-        col_count = len(headers)
         widths = [len(h) for h in headers]
         for row in rows:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], len(cell))
 
-        # Cap description at 60 characters to avoid crazy wrapping
         if widths[3] > 60:
             widths[3] = 60
+        if widths[8] > 30:
+            widths[8] = 30
 
-        # Build format strings
         fmt = "  ".join(f"{{:<{w}}}" for w in widths)
 
-        # Print header
         print(fmt.format(*headers))
         print("-" * sum(widths) + "-" * (2 * (len(widths) - 1)))
 
-        # Print rows (truncate description if needed)
         for row in rows:
             desc = row[3]
             if len(desc) > widths[3]:
                 row[3] = desc[:widths[3] - 3] + "..."
+            facets_str = row[8]
+            if len(facets_str) > widths[8]:
+                row[8] = facets_str[:widths[8] - 3] + "..."
             print(fmt.format(*row))
 
     if args.verbose:
