@@ -5,14 +5,7 @@ find-specified-transactions.py
 Find transactions exceeding (or falling within) a given monetary threshold
 across one or more tax years, using the existing data.yaml and control.yaml.
 
-Reuses:
-  - financial_statement_analyser.core.data.load_data_file
-  - financial_statement_analyser.core.control.load_control_file
-  - financial_statement_analyser.core.control.get_rules_for_type
-  - financial_statement_analyser.core.analysis.match_rule
-  - financial_statement_analyser.loaders.load_statement_by_type
-
-Output is tab-separated to stdout.
+Output is human-readable aligned columns by default. Use --raw-tsv for piping.
 """
 
 import argparse
@@ -29,25 +22,20 @@ from financial_statement_analyser.loaders import load_statement_by_type
 
 
 def get_signed_amount(tx):
-    """Return a signed Decimal: positive = credit (money in), negative = debit (money out)."""
+    """Return signed Decimal: positive = credit (money in), negative = debit (money out)."""
     return tx.credit - tx.debit
 
 
 def get_category_for_transaction(tx, rules, control):
-    """
-    Determine the category for a transaction, using the same logic as
-    analyse_transactions(). Returns the category ID (string).
-    """
+    """Determine category using the same logic as analyse_transactions()."""
     matched_rule = None
     for rule in rules:
         if match_rule(tx, rule):
             matched_rule = rule
             break
-
     if matched_rule is None:
         return control.default_category
-    else:
-        return matched_rule.category
+    return matched_rule.category
 
 
 def parse_arguments():
@@ -83,13 +71,17 @@ def parse_arguments():
     )
     parser.add_argument(
         "--exclude",
-        help="Comma-separated list of category IDs to exclude (e.g., INCOME_SALARY,CAPITAL_EXPENSES,CREDIT_CARD). "
-             "Spaces around commas are allowed if the whole list is quoted."
+        help="Comma-separated list of category IDs to exclude."
+    )
+    parser.add_argument(
+        "--raw-tsv",
+        action="store_true",
+        help="Output raw tab-separated values (for piping to files/Excel)."
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Show progress messages (which files are being read)."
+        help="Show progress messages."
     )
     return parser.parse_args()
 
@@ -97,7 +89,6 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    # Parse the exclude list (strip whitespace, handle empty)
     excluded_categories = set()
     if args.exclude:
         for cat in args.exclude.split(','):
@@ -124,7 +115,7 @@ def main():
             print_error(f"Invalid --max-amount '{args.max_amount}': {e}", stats)
             return 1
 
-    # 1. Load the data file
+    # Load data file
     if not os.path.isfile(args.data_file):
         print_error(f"Data file not found: {args.data_file}", stats)
         return 1
@@ -135,7 +126,7 @@ def main():
         print_error(f"Failed to load data file: {e}", stats)
         return 1
 
-    # 2. Filter tax years if requested
+    # Filter tax years
     if args.tax_year:
         tax_years = [ty for ty in tax_years if ty['year'] in args.tax_year]
 
@@ -143,7 +134,7 @@ def main():
         print_error("No tax years to process (check --tax-year filter)", stats)
         return 1
 
-    # 3. Load the control file
+    # Load control file
     if not os.path.isfile(control_path):
         print_error(f"Control file not found: {control_path}", stats)
         return 1
@@ -154,19 +145,9 @@ def main():
         print_error(f"Failed to load control file: {e}", stats)
         return 1
 
-    # 4. Print header (tab-separated)
-    print("\t".join([
-        "TaxYear",
-        "StatementFile",
-        "Date",
-        "Description",
-        "Amount",
-        "Balance",
-        "Type",
-        "Category"
-    ]))
-
-    total_matches = 0
+    # Collect rows here for pretty formatting
+    rows = []
+    headers = ["TaxYear", "StatementFile", "Date", "Description", "Amount", "Balance", "Type", "Category"]
 
     for ty in tax_years:
         year_str = ty['year']
@@ -177,7 +158,6 @@ def main():
             if args.verbose:
                 print(f"Reading {stmt_file} ({stmt_type})...", file=sys.stderr)
 
-            # Load the rules for this statement type
             try:
                 rules = get_rules_for_type(stmt_type, control)
             except Exception as e:
@@ -197,35 +177,28 @@ def main():
                 continue
 
             for tx in transactions:
-                # Determine the category for this transaction
                 category = get_category_for_transaction(tx, rules, control)
 
-                # Apply exclude filter
                 if category in excluded_categories:
                     continue
 
                 signed_amount = get_signed_amount(tx)
                 abs_amount = abs(signed_amount)
 
-                # Apply amount filters
                 if abs_amount < min_dec:
                     continue
                 if max_dec is not None and abs_amount > max_dec:
                     continue
 
-                # Apply credit/debit filter
                 if args.type == "credit" and signed_amount <= 0:
                     continue
                 if args.type == "debit" and signed_amount >= 0:
                     continue
 
                 tx_type = "Credit" if signed_amount > 0 else "Debit" if signed_amount < 0 else "Zero"
-
-                # Clean description
                 desc = tx.description.replace("\t", " ").replace("\n", " ")
 
-                # Print matching transaction
-                print("\t".join([
+                rows.append([
                     year_str,
                     os.path.basename(stmt_file),
                     tx.date.isoformat() if hasattr(tx.date, 'isoformat') else str(tx.date),
@@ -234,12 +207,47 @@ def main():
                     f"{tx.balance:.2f}",
                     tx_type,
                     category
-                ]))
+                ])
 
-                total_matches += 1
+    # ---- Output ----
+    if args.raw_tsv:
+        # Raw tab-separated (for piping)
+        print("\t".join(headers))
+        for row in rows:
+            print("\t".join(row))
+    else:
+        # Human-readable aligned columns
+        if not rows:
+            print("No matching transactions found.")
+            return 0
+
+        # Calculate column widths
+        col_count = len(headers)
+        widths = [len(h) for h in headers]
+        for row in rows:
+            for i, cell in enumerate(row):
+                widths[i] = max(widths[i], len(cell))
+
+        # Cap description at 60 characters to avoid crazy wrapping
+        if widths[3] > 60:
+            widths[3] = 60
+
+        # Build format strings
+        fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+
+        # Print header
+        print(fmt.format(*headers))
+        print("-" * sum(widths) + "-" * (2 * (len(widths) - 1)))
+
+        # Print rows (truncate description if needed)
+        for row in rows:
+            desc = row[3]
+            if len(desc) > widths[3]:
+                row[3] = desc[:widths[3] - 3] + "..."
+            print(fmt.format(*row))
 
     if args.verbose:
-        print(f"Total matching transactions found (after exclusions): {total_matches}", file=sys.stderr)
+        print(f"Total matching transactions: {len(rows)}", file=sys.stderr)
 
     if stats.error_count > 0:
         return 1
