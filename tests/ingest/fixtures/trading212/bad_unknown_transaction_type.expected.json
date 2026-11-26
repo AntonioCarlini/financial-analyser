@@ -1,0 +1,258 @@
+{
+  "accounts": [
+    {
+      "account_ref": "11112222",
+      "account_type": "ISA",
+      "as_of": "2026-04-05T20:59:00Z",
+      "cash": "100",
+      "currency": "GBP",
+      "holdings": null,
+      "notes": [],
+      "period_end": "2026-04-05T20:59:00Z",
+      "period_start": "2025-04-05T21:00:00Z",
+      "portfolio": "10424.35",
+      "positions": [
+        {
+          "avg_price": "80",
+          "currency": "GBP",
+          "fx_rate": "1",
+          "instrument_name": "VUSA",
+          "isin": "IE00B3XXRP09",
+          "price": "82",
+          "price_currency": "GBP",
+          "quantity": "10",
+          "ticker": "VUSA",
+          "value": "820"
+        },
+        {
+          "avg_price": "500",
+          "currency": "GBP",
+          "fx_rate": "1.15",
+          "instrument_name": "SXR8",
+          "isin": "IE00B5BMR087",
+          "price": "520",
+          "price_currency": "EUR",
+          "quantity": "2",
+          "ticker": "SXR8",
+          "value": "904.35"
+        },
+        {
+          "avg_price": "8520.52",
+          "currency": "GBP",
+          "fx_rate": "100",
+          "instrument_name": "ABCD",
+          "isin": "GB00B0000001",
+          "price": "8600",
+          "price_currency": "GBX",
+          "quantity": "100",
+          "ticker": "ABCD",
+          "value": "8600"
+        }
+      ],
+      "problems": [],
+      "totals": [
+        {
+          "amount": "5000",
+          "currency": "GBP",
+          "measure": "deposits"
+        },
+        {
+          "amount": "0",
+          "currency": "GBP",
+          "measure": "withdrawals"
+        },
+        {
+          "amount": "50",
+          "currency": "GBP",
+          "measure": "bonus"
+        },
+        {
+          "amount": "0",
+          "currency": "GBP",
+          "measure": "closed_result"
+        },
+        {
+          "amount": "1234.56",
+          "currency": "GBP",
+          "measure": "open_result"
+        },
+        {
+          "amount": "1234.56",
+          "currency": "GBP",
+          "measure": "open_result_change"
+        },
+        {
+          "amount": "6.48",
+          "currency": "GBP",
+          "measure": "dividends_and_distributions"
+        },
+        {
+          "amount": "0",
+          "currency": "GBP",
+          "measure": "interest_on_cash"
+        },
+        {
+          "amount": "-1.5",
+          "currency": "GBP",
+          "measure": "fx_fee"
+        },
+        {
+          "amount": "-3",
+          "currency": "GBP",
+          "measure": "third_party_fees"
+        }
+      ],
+      "transactions": [
+        {
+          "amount": "-800",
+          "currency": "GBP",
+          "external_id": "12345678901",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": "1",
+          "isin": "IE00B3XXRP09",
+          "kind": "buy",
+          "price": "80",
+          "price_currency": "GBP",
+          "quantity": "10",
+          "raw_type": "Market",
+          "seq": 0,
+          "ticker": "VUSA",
+          "timestamp": "2026-01-02T10:15:30Z",
+          "withholding_tax": null
+        },
+        {
+          "amount": "-869.57",
+          "currency": "GBP",
+          "external_id": "12345678902",
+          "fees": "3",
+          "fx_fee": "1.5",
+          "fx_rate": "1.15",
+          "isin": "IE00B5BMR087",
+          "kind": "buy",
+          "price": "500",
+          "price_currency": "EUR",
+          "quantity": "2",
+          "raw_type": "Market",
+          "seq": 0,
+          "ticker": "SXR8",
+          "timestamp": "2026-01-05T11:00:00Z",
+          "withholding_tax": null
+        },
+        {
+          "amount": null,
+          "currency": "GBP",
+          "external_id": "12345678903",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": "100",
+          "isin": "GB00B0000001",
+          "kind": "corporate_action",
+          "price": "85205.20915565",
+          "price_currency": "GBX",
+          "quantity": "-10",
+          "raw_type": "Stock split",
+          "seq": 0,
+          "ticker": "ABCD",
+          "timestamp": "2026-02-01T12:00:00Z",
+          "withholding_tax": null
+        },
+        {
+          "amount": null,
+          "currency": "GBP",
+          "external_id": "12345678904",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": "100",
+          "isin": "GB00B0000001",
+          "kind": "corporate_action",
+          "price": "8520.52",
+          "price_currency": "GBX",
+          "quantity": "100",
+          "raw_type": "Stock split",
+          "seq": 0,
+          "ticker": "ABCD",
+          "timestamp": "2026-02-01T12:00:00Z",
+          "withholding_tax": null
+        },
+        {
+          "amount": "5000",
+          "currency": "GBP",
+          "external_id": "",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": null,
+          "isin": "",
+          "kind": "deposit",
+          "price": null,
+          "price_currency": "",
+          "quantity": null,
+          "raw_type": "TrueLayer",
+          "seq": 0,
+          "ticker": "",
+          "timestamp": "2026-01-01T09:00:00Z",
+          "withholding_tax": null
+        },
+        {
+          "amount": "50",
+          "currency": "GBP",
+          "external_id": "",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": null,
+          "isin": "",
+          "kind": "free_shares",
+          "price": null,
+          "price_currency": "",
+          "quantity": null,
+          "raw_type": "Free equity shares",
+          "seq": 0,
+          "ticker": "",
+          "timestamp": "2026-01-03T09:30:00Z",
+          "withholding_tax": null
+        },
+        {
+          "amount": "1.48",
+          "currency": "GBP",
+          "external_id": "",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": "0.86957",
+          "isin": "IE00B5BMR087",
+          "kind": "dividend",
+          "price": "1",
+          "price_currency": "EUR",
+          "quantity": "2",
+          "raw_type": "Dividend",
+          "seq": 0,
+          "ticker": "SXR8",
+          "timestamp": "2026-02-15T00:00:00Z",
+          "withholding_tax": "0.3"
+        },
+        {
+          "amount": "5",
+          "currency": "GBP",
+          "external_id": "",
+          "fees": null,
+          "fx_fee": null,
+          "fx_rate": "0.01",
+          "isin": "GB00B0000001",
+          "kind": "dividend",
+          "price": "5",
+          "price_currency": "GBX",
+          "quantity": "100",
+          "raw_type": "Dividend",
+          "seq": 0,
+          "ticker": "ABCD",
+          "timestamp": "2026-02-20T00:00:00Z",
+          "withholding_tax": "0"
+        }
+      ],
+      "warnings": [
+        "unrecognised transaction type 'Mystery Transfer': add it to RAW_TYPE_KINDS in providers/trading212.py"
+      ]
+    }
+  ],
+  "source_type": "activity_statement",
+  "warnings": []
+}

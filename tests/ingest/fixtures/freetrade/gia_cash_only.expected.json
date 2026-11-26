@@ -1,0 +1,23 @@
+{
+  "accounts": [
+    {
+      "account_ref": "ACC-123",
+      "account_type": "GIA",
+      "as_of": "2026-10-31",
+      "cash": "250",
+      "currency": "GBP",
+      "holdings": "0",
+      "notes": [],
+      "period_end": null,
+      "period_start": null,
+      "portfolio": "250",
+      "positions": [],
+      "problems": [],
+      "totals": [],
+      "transactions": [],
+      "warnings": []
+    }
+  ],
+  "source_type": "statement",
+  "warnings": []
+}

@@ -1,0 +1,36 @@
+{
+  "accounts": [
+    {
+      "account_ref": null,
+      "account_type": "GIA",
+      "as_of": "2024-02-29",
+      "cash": "100",
+      "currency": "GBP",
+      "holdings": "5000",
+      "notes": [],
+      "period_end": null,
+      "period_start": null,
+      "portfolio": "5100",
+      "positions": [
+        {
+          "avg_price": null,
+          "currency": "GBP",
+          "fx_rate": null,
+          "instrument_name": "Example Global Equity UCITS ETF (EGEQ)",
+          "isin": "",
+          "price": null,
+          "price_currency": "",
+          "quantity": "500",
+          "ticker": "EGEQ",
+          "value": "5000"
+        }
+      ],
+      "problems": [],
+      "totals": [],
+      "transactions": [],
+      "warnings": []
+    }
+  ],
+  "source_type": "statement",
+  "warnings": []
+}

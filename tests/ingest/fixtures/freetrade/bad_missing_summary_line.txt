@@ -1,0 +1,40 @@
+                                                                                    
+    A PERSON                                                                        
+    1                                                                               
+    FAKE STREET                                                                     
+                                                                                    
+    TOWN AB12 3CD                                                                   
+                                                                                    
+    Account reference: ACC-123                                                      
+                                                                                    
+                                                                                    
+    August  2026 GIA  statement                                                     
+                                                                                    
+                                                                                    
+    Summary                                                                         
+                                                                                    
+                                                                                    
+      Portfolio                                                        £10,300.50   
+                                                                                    
+                                                                                    
+      Total Holdings                                                   £10,000.00   
+                                                                                    
+      Cash Total                                                          £300.50   
+                                                                                    
+                                                                                    
+    Positions                                                                       
+                                                                                    
+                                                                                    
+      Holding                                             Quantity         Value    
+                                                                                    
+      Example Global Equity UCITS ETF (EGEQ)                  1000     £6,000.00    
+                                                                                    
+      Example S&P 500 UCITS ETF (ESPX.)                       12.5     £2,500.00    
+                                                                                    
+      Example Gilt 0-5 Year ETF (GILT)                        2000     £1,500.00    
+                                                                                    
+                                                                                    
+    Example Freetrade Limited is authorised and regulated by the Example Authority and the
+    Example Regulator. Example is a trading name of Example Freetrade Limited (FRN 12345678).
+    Example © 2026 Example, All rights reserved.                                    
+                                                                                    

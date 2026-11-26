@@ -1,0 +1,27 @@
+{
+  "accounts": [
+    {
+      "account_ref": "ACC-123",
+      "account_type": null,
+      "as_of": null,
+      "cash": "250",
+      "currency": "GBP",
+      "holdings": "0",
+      "notes": [],
+      "period_end": null,
+      "period_start": null,
+      "portfolio": "250",
+      "positions": [],
+      "problems": [
+        "unknown account type None"
+      ],
+      "totals": [],
+      "transactions": [],
+      "warnings": [
+        "statement title line not found"
+      ]
+    }
+  ],
+  "source_type": "statement",
+  "warnings": []
+}

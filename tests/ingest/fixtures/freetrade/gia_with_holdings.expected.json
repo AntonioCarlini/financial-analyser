@@ -1,0 +1,60 @@
+{
+  "accounts": [
+    {
+      "account_ref": "ACC-123",
+      "account_type": "GIA",
+      "as_of": "2026-08-31",
+      "cash": "300.5",
+      "currency": "GBP",
+      "holdings": "10000",
+      "notes": [],
+      "period_end": null,
+      "period_start": null,
+      "portfolio": "10300.5",
+      "positions": [
+        {
+          "avg_price": null,
+          "currency": "GBP",
+          "fx_rate": null,
+          "instrument_name": "Example Global Equity UCITS ETF (EGEQ)",
+          "isin": "",
+          "price": null,
+          "price_currency": "",
+          "quantity": "1000",
+          "ticker": "EGEQ",
+          "value": "6000"
+        },
+        {
+          "avg_price": null,
+          "currency": "GBP",
+          "fx_rate": null,
+          "instrument_name": "Example S&P 500 UCITS ETF (ESPX.)",
+          "isin": "",
+          "price": null,
+          "price_currency": "",
+          "quantity": "12.5",
+          "ticker": "ESPX.",
+          "value": "2500"
+        },
+        {
+          "avg_price": null,
+          "currency": "GBP",
+          "fx_rate": null,
+          "instrument_name": "Example Gilt 0-5 Year ETF (GILT)",
+          "isin": "",
+          "price": null,
+          "price_currency": "",
+          "quantity": "2000",
+          "ticker": "GILT",
+          "value": "1500"
+        }
+      ],
+      "problems": [],
+      "totals": [],
+      "transactions": [],
+      "warnings": []
+    }
+  ],
+  "source_type": "statement",
+  "warnings": []
+}
