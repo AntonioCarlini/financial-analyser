@@ -7,7 +7,9 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from ..models import ParsedStatement, Position, normalise_account_type
+from ..discovery import MonthlyFilenameDiscoverer
+from ..models import (ParsedAccount, ParsedDocument, Position, month_end,
+                      normalise_account_type)
 
 TITLE_RE = re.compile(r"^\s*([A-Za-z]+)\s+(\d{4})\s+(\S+)\s+statement\s*$", re.I | re.M)
 ACCOUNT_RE = re.compile(r"Account reference:\s*(\S+)", re.I)
@@ -24,10 +26,11 @@ def _money(text: str, label: str):
 
 class FreetradeParser:
     name = "freetrade"
-    version = "1"
-    statement_interval_months = 1
+    version = "2"
+    coverage = "monthly"
+    discoverer = MonthlyFilenameDiscoverer()
 
-    def read(self, path: Path) -> ParsedStatement:
+    def read(self, path: Path) -> ParsedDocument:
         return self.parse_text(self.extract_text(path))
 
     @staticmethod
@@ -40,36 +43,35 @@ class FreetradeParser:
             return "\n".join(page.extract_text(layout=True) or "" for page in pdf.pages)
 
     @staticmethod
-    def parse_text(text: str) -> ParsedStatement:
-        r = ParsedStatement()
+    def parse_text(text: str) -> ParsedDocument:
+        a = ParsedAccount()
 
         m = TITLE_RE.search(text)
         if m:
             month_name, year, type_token = m.groups()
-            r.account_type = normalise_account_type(type_token)
-            if r.account_type is None:
-                r.warnings.append(f"unrecognised account type {type_token!r} in title")
+            a.account_type = normalise_account_type(type_token)
+            if a.account_type is None:
+                a.warnings.append(f"unrecognised account type {type_token!r} in title")
             try:
-                r.month = datetime.strptime(month_name, "%B").month
-                r.year = int(year)
+                month = datetime.strptime(month_name, "%B").month
+                a.as_of = month_end(int(year), month).isoformat()
             except ValueError:
-                r.warnings.append(f"could not parse month {month_name!r}")
+                a.warnings.append(f"could not parse month {month_name!r}")
         else:
-            r.warnings.append("statement title line not found")
+            a.warnings.append("statement title line not found")
 
-        m = ACCOUNT_RE.search(text)
-        if m:
-            r.account_ref = m.group(1)
         # Older statements have no account reference; the caller supplies a fallback.
+        m = ACCOUNT_RE.search(text)
+        a.account_ref = m.group(1) if m else None
 
-        r.portfolio = _money(text, "Portfolio")
-        r.holdings = _money(text, "Total holdings")
-        r.cash = _money(text, "Total cash")
-        for label, val in (("portfolio", r.portfolio), ("total holdings", r.holdings), ("total cash", r.cash)):
+        a.portfolio = _money(text, "Portfolio")
+        a.holdings = _money(text, "Total holdings")
+        a.cash = _money(text, "Total cash")
+        for label, val in (("portfolio", a.portfolio), ("total holdings", a.holdings), ("total cash", a.cash)):
             if val is None:
-                r.warnings.append(f"{label} not found")
-        if any(v is not None for v in (r.portfolio, r.holdings, r.cash)):
-            r.currency = "GBP"   # amounts are matched on the pound sign
+                a.warnings.append(f"{label} not found")
+        if any(v is not None for v in (a.portfolio, a.holdings, a.cash)):
+            a.currency = "GBP"   # amounts are matched on the pound sign
 
         # Scan every line after the 'Positions' heading. Header and footer lines never
         # end in '<quantity> £<value>' so they don't match; scanning to the end also
@@ -82,13 +84,15 @@ class FreetradeParser:
                 if row:
                     name = row.group("name").strip()
                     t = TICKER_RE.search(name)
-                    r.positions.append(Position(
+                    a.positions.append(Position(
                         instrument_name=name,
                         ticker=t.group(1) if t else "",
                         quantity=Decimal(row.group("qty").replace(",", "")),
                         value=Decimal(row.group("value").replace(",", "")),
                         currency="GBP",
                     ))
-        if r.holdings and r.holdings > 0 and not r.positions:
-            r.warnings.append("holdings are non-zero but no position rows were parsed")
-        return r
+        if any(not pos.ticker for pos in a.positions):
+            a.notes.append("a holding name has no bracketed ticker; it may have wrapped onto two lines")
+        if a.holdings and a.holdings > 0 and not a.positions:
+            a.warnings.append("holdings are non-zero but no position rows were parsed")
+        return ParsedDocument(source_type="statement", accounts=[a])

@@ -1,8 +1,8 @@
-"""Finding statement files. Deliberately separate so the layout can change.
+"""Finding statement files. Deliberately separate so layouts can change.
 
-A discoverer takes a directory and returns (statement files, ignored files).
-To support a new naming scheme or folder layout, add another class with the
-same discover() method and select it in __main__.py.
+A discoverer takes a directory and returns (source files, ignored files).
+To support a new naming scheme or folder layout, add a class with the same
+discover() method and point the provider's `discoverer` attribute at it.
 """
 from __future__ import annotations
 
@@ -14,14 +14,22 @@ from .models import normalise_account_type
 
 
 @dataclass(frozen=True)
-class StatementFile:
+class SourceFile:
     path: Path
-    account_type: str   # canonical, from the filename
-    year: int
-    month: int
+    source_type: str
+    # Optional hints, cross-checked against the document's contents when present.
+    account_type: str | None = None
+    year: int | None = None
+    month: int | None = None
 
 
-class FilenameDiscoverer:
+def _candidates(directory: Path):
+    for path in sorted(Path(directory).iterdir()):
+        if path.is_file() and not path.name.startswith("."):
+            yield path
+
+
+class MonthlyFilenameDiscoverer:
     """Single directory of files named like GIA-Statement-2026-10.pdf."""
 
     PATTERN = re.compile(
@@ -30,9 +38,7 @@ class FilenameDiscoverer:
 
     def discover(self, directory: Path):
         files, ignored = [], []
-        for path in sorted(Path(directory).iterdir()):
-            if path.name.startswith(".") or not path.is_file():
-                continue
+        for path in _candidates(directory):
             m = self.PATTERN.match(path.name)
             if not m:
                 ignored.append((path, "filename does not match <TYPE>-Statement-YYYY-MM.pdf"))
@@ -44,6 +50,25 @@ class FilenameDiscoverer:
             elif not 1 <= month <= 12:
                 ignored.append((path, f"invalid month {m['month']!r}"))
             else:
-                files.append(StatementFile(path, account_type, int(m["year"]), month))
+                files.append(SourceFile(path, "statement", account_type, int(m["year"]), month))
         files.sort(key=lambda f: (f.year, f.month, f.account_type))
+        return files, ignored
+
+
+class ActivityStatementDiscoverer:
+    """Files named like Activity-Statement-2025-04-06-2026-04-05.pdf.
+
+    Dates are read from inside the document, so the name only has to start
+    with Activity-Statement.
+    """
+
+    PATTERN = re.compile(r"^Activity-Statement.*\.pdf$", re.I)
+
+    def discover(self, directory: Path):
+        files, ignored = [], []
+        for path in _candidates(directory):
+            if self.PATTERN.match(path.name):
+                files.append(SourceFile(path, "activity_statement"))
+            else:
+                ignored.append((path, "filename does not match Activity-Statement*.pdf"))
         return files, ignored

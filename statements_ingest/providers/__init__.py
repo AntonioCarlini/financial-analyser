@@ -2,10 +2,13 @@
 
 An adapter class needs:
     name: str
-    version: str                      # bump when parsing logic changes
-    statement_interval_months: int    # used for gap detection
-    read(path) -> ParsedStatement
+    version: str          # bump when parsing logic changes
+    coverage: str         # "monthly" or "ranges", selects the gap report
+    discoverer            # object with discover(directory) -> (files, ignored)
+    read(path) -> ParsedDocument      # extract text from the file, then parse_text
+    parse_text(text) -> ParsedDocument  # pure: needed by the test suite
 """
 from .freetrade import FreetradeParser
+from .trading212 import Trading212Parser
 
-PROVIDERS = {FreetradeParser.name: FreetradeParser}
+PROVIDERS = {cls.name: cls for cls in (FreetradeParser, Trading212Parser)}
