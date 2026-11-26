@@ -327,31 +327,55 @@ def main():
                     facets_str
                 ])
 
+    # ---- Sort by date (ascending) ----
+    rows.sort(key=lambda r: (r[2], r[3], Decimal(r[4])))   # r[2] is the date string r[3] is description r[4] is amount
+    
     # ---- Output ----
     if args.raw_tsv:
+        # Raw tab-separated values: use the original strings (no £, no padding)
         print("\t".join(headers))
         for row in rows:
             print("\t".join(row))
     else:
         if not rows:
             print("No matching transactions found.")
-            return 0
+            return 1 if stats.error_count > 0 else 0
+        
+        # ---- Format currency columns for human display ----
+        # Compute the maximum width of the numeric part (without £)
+        amount_width = max(len(r[4]) for r in rows) if rows else 0
+        balance_width = max(len(r[5]) for r in rows) if rows else 0
 
+        # Set a reasonable minimum width (e.g., 10) so small numbers don't look cramped
+        amount_width = max(amount_width, 10)
+        balance_width = max(balance_width, 10)
+
+        # Prepend "£" and right‑justify the number within the numeric width
+        for row in rows:
+            row[4] = f"£{row[4]:>{amount_width}}"   # e.g. "£     123.45"
+            row[5] = f"£{row[5]:>{balance_width}}"
+
+        # ---- Compute column widths from headers and formatted rows ----
         widths = [len(h) for h in headers]
         for row in rows:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], len(cell))
 
+        # Truncate long descriptions and facets (keep existing behaviour)
         if widths[3] > 60:
             widths[3] = 60
         if widths[8] > 30:
             widths[8] = 30
 
+        # Build format string: all columns are left‑aligned.
+        # The £ signs are already at the left of their cells, so they line up.
         fmt = "  ".join(f"{{:<{w}}}" for w in widths)
 
+        # Print headers and separator
         print(fmt.format(*headers))
         print("-" * sum(widths) + "-" * (2 * (len(widths) - 1)))
 
+        # Print rows, applying truncation to description and facets
         for row in rows:
             desc = row[3]
             if len(desc) > widths[3]:
